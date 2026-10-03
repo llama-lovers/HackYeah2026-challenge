@@ -154,7 +154,7 @@ export async function performProposal(run: CommandRun, step: ProposalStep): Prom
   // Charge only click/fill messages actually sent; reads and announcements are free.
   if (['click', 'fill'].includes(proposal.action) && !takeStep(run.budget)) { if (jobId) await runSerial(() => dropJob(jobId)); await say(msg.STEP_LIMIT); return 'stopped'; }
   let executed: ExecuteResult;
-  try { executed = await chrome.tabs.sendMessage(tabId, { type: 'EXECUTE', epoch: step.epoch, proposal, turnId, jobId, docId: step.docId, confirmed: step.confirmed }, { frameId: 0 }); }
+  try { executed = await chrome.tabs.sendMessage(tabId, { type: 'EXECUTE', epoch: step.epoch, proposal, turnId, jobId, docId: step.docId, confirmed: step.confirmed, context: step.context }, { frameId: 0 }); }
   catch {
     const job = await getJob();
     if (jobId && job?.id === jobId && job.state !== 'proposed') return 'handoff';
@@ -223,7 +223,7 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
     }
     if (reply.kind === 'confirm' && pending.kind === 'confirm_parcel') return runParcelSearch(run, pending.digits);
     if (reply.kind === 'confirm' && pending.kind === 'confirm_action') {
-      const outcome = await performProposal(run, { proposal: pending.proposal, epoch: pending.epoch, docId: pending.docId, preSnapshot: pending.preSnapshot, announce: 'local', confirmed: true, category: pending.category });
+      const outcome = await performProposal(run, { proposal: pending.proposal, epoch: pending.epoch, docId: pending.docId, preSnapshot: pending.preSnapshot, announce: 'local', confirmed: true, category: pending.category, context: pending.context });
       return outcome === 'handoff' ? 'handoff' : undefined;
     }
     if (reply.kind === 'cancel') { await say(msg.CANCELLED); return; }

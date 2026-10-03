@@ -165,6 +165,31 @@ try {
   const renamedDuringDelay = await page.evaluate(`(async () => { document.body.innerHTML='<button type="button">Pokaż mapę</button><div id="host"></div>'; window.__clicked=false; document.querySelector('button').addEventListener('click', () => { window.__clicked=true; }); const s=__snapTest.takeSnapshot(), id=s.nodes.find(n=>n.role==='button').id; const result=await __snapTest.execute(s.epoch,{action:'click',target:id,text:'',needs_confirmation:false,say:''},{host:document.querySelector('#host'),announce(){ document.querySelector('button').textContent='Pokaż pomoc'; }}); return {result,clicked:window.__clicked}; })()`);
   assert.deepEqual(renamedDuringDelay, { result: { ok: false, reason: 'stale' }, clicked: false });
   console.log('PASS dom-check: semantic drift is refused before the action');
+  // Reusing the same delete control must never delete a record other than the one spoken.
+  for (const mutation of ['unchanged', 'heading', 'buttonBinding', 'rowBinding', 'moveRow', 'announcement', 'commit']) {
+    const recycled = await page.evaluate(`(async () => {
+      document.body.innerHTML='<section data-record="poznan"><h2>Paczka z Poznania</h2><button type="button" data-city="Poznań">Usuń</button></section><section data-record="warsaw"><h2>Paczka z Warszawy</h2></section><div id="host"></div>';
+      const button=document.querySelector('button'); const deleted=[];
+      button.onclick=()=>deleted.push(button.dataset.city);
+      const s=__snapTest.takeSnapshot(), id=s.nodes.find(n=>n.name==='Usuń').id;
+      const proposal={action:'click',target:id,text:'',needs_confirmation:false,say:''};
+      const offered=await __snapTest.execute(s.epoch,proposal,{host:document.querySelector('#host'),announce(){}});
+      const mutate=()=>{
+        if (${JSON.stringify(mutation)}==='heading') document.querySelector('h2').textContent='Paczka z Warszawy';
+        else if (${JSON.stringify(mutation)}==='rowBinding') button.parentElement.dataset.record='warsaw';
+        else if (${JSON.stringify(mutation)}==='moveRow') document.querySelectorAll('section')[1].append(button);
+        else button.dataset.city='Warszawa';
+      };
+      if (!['unchanged','announcement','commit'].includes(${JSON.stringify(mutation)})) mutate();
+      const result=await __snapTest.execute(s.epoch,proposal,{host:document.querySelector('#host'),announce(){if (${JSON.stringify(mutation)}==='announcement') mutate();}},async()=>{if (${JSON.stringify(mutation)}==='commit') mutate();return true;},{confirmed:true,context:'Paczka z Poznania'});
+      return {offered,result,deleted,same:document.querySelector('button')===button,label:button.textContent};
+    })()`);
+    assert.equal(recycled.offered.confirm.name, 'Usuń', mutation);
+    if (mutation === 'unchanged') { assert.equal(recycled.result.ok, true); assert.deepEqual(recycled.deleted, ['Poznań']); }
+    else { assert.deepEqual(recycled.result, {ok:false,reason:'stale'}, mutation); assert.deepEqual(recycled.deleted, [], mutation); }
+    assert.equal(recycled.same, true); assert.equal(recycled.label, 'Usuń');
+  }
+  console.log('PASS dom-check: recycled record, spoken heading and immediate pre-click confirmation binding');
   await page.goto(server.origin + '/fixtures/consent-banner.html'); await page.evaluate(bundle);
   const consent = await page.evaluate(`(() => { const s=__snapTest.takeSnapshot();return s.nodes.filter(n=>n.kind==='interactive'&&['button','link'].includes(n.role)).map(n=>{const target=__snapTest.resolveTarget(n.id,s.epoch).target, p={action:'click',target:n.id,text:'',needs_confirmation:false,say:''};return {name:n.name,consent:target.consent,unconfirmed:__snapTest.validateProposal(p,target),confirmed:__snapTest.validateProposal(p,target,{confirmed:true})};}); })()`);
   for (const name of ['ZAAKCEPTUJ WSZYSTKO', 'ODRZUĆ WSZYSTKO', 'DOSTOSUJ', 'Polityce cookies', 'Zamknij', 'Znajdź']) {

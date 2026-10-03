@@ -372,9 +372,13 @@ test('duplicate model target asks without execution then chooses stored target i
   tabCalls.length=0; requests.length=0; await localCommand('dwa');
   const execution = tabCalls.find(c=>c.message.type==='EXECUTE')!.message;
   assert.equal(execution.proposal.target,'e2'); assert.equal(execution.epoch,19); assert.equal(execution.docId,'original-document');
+  assert.equal(execution.context, 'Poznań');
   assert(!tabCalls.some(c=>c.message.type==='SNAPSHOT')); assert.deepEqual(requests,[]);
   assert.deepEqual(announced(),['Chcę kliknąć „Usuń”, Poznań. Potwierdzasz? Powiedz tak albo nie.']);
   assert.equal((store.get('pending') as any).kind,'confirm_action');
+  tabCalls.length=0; await localCommand('tak');
+  const confirmed = tabCalls.find(c=>c.message.type==='EXECUTE')!.message;
+  assert.equal(confirmed.confirmed,true); assert.equal(confirmed.context,'Poznań');
 });
 test('model choose rejects fewer than two valid IDs and carries confirmation flag to exact stored reply', async () => {
   const s = {...snapshot,epoch:9,nodes:[button,{...button,id:'e2',name:'Pomoc'},{...button,id:'e3',state:{disabled:true}},{...button,id:'e4',kind:'text'},{...button,id:'e5',role:'textbox'}]};

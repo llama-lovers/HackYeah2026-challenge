@@ -28,7 +28,7 @@ if (!globals.__voiceAgentInitialized) {
         if (message.docId !== getDocumentId()) { respond({ ok: false, reason: 'stale' }); break; }
         void execute(message.epoch, message.proposal, announcer, async () => {
           try { return ((await chrome.runtime.sendMessage({ type: 'EXECUTING', turnId: message.turnId, jobId: message.jobId })) as { ok?: boolean } | undefined)?.ok === true; } catch { return false; }
-        }, { confirmed: message.confirmed === true }).then(respond).catch(() => respond({ ok: false, reason: 'not_found' }));
+        }, { confirmed: message.confirmed === true, context: message.context }).then(respond).catch(() => respond({ ok: false, reason: 'not_found' }));
         return true;
       case 'SETTLE_DIFF':
         void (async () => {

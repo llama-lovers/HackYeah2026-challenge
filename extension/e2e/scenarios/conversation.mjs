@@ -185,6 +185,9 @@ async function verbosityScenario(ctx) {
   await ctx.restartBrowser();
   assert.deepEqual(await ctx.swEval('chrome.storage.local.get(null)'), { verbosity: 'concise' });
   assert.equal(await replayEntry(ctx), undefined, 'replay does not survive a browser restart');
+  // No page text, replay or processing deadline outlives the browser: session storage holds nothing of the old turn.
+  const session = JSON.stringify(await ctx.swEval('chrome.storage.session.get(null)'));
+  assert(!/processingDeadline|waitNotifiedAt|lastResponse|Śledzenie przesyłek/.test(session), session);
   const restarted = await ctx.openPage('/fixtures/tracking-form.html');
   await ctx.speak(restarted, 'powtórz');
   await ctx.waitForLive(restarted, REPLAY_EMPTY);

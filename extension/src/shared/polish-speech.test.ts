@@ -22,3 +22,20 @@ test('cardinals and plural forms follow Polish agreement', () => {
   for (const [n, result] of [[0, 'zero'], [7, 'siedem'], [23, 'dwadzieścia trzy'], [105, 'sto pięć'], [999, 'dziewięćset dziewięćdziesiąt dziewięć'], [1000, 'tysiąc'], [2000000, 'dwa miliony']]) assert.equal(s.spellInteger?.(n), result);
   for (const n of [1, 2, 3, 4, 22, 23, 24, 102, 0, 5, 11, 12, 14, 21, 25, 112, 113, 114]) assert.equal(s.pluralForm(n, 'one', 'few', 'many'), n === 1 ? 'one' : [2, 3, 4, 22, 23, 24, 102].includes(n) ? 'few' : 'many');
 });
+test('PLN formatting uses integer zloty and grosz agreement', () => {
+  for (const [zl, gr, expected] of [[349, 0, 'trzysta czterdzieści dziewięć złotych'], [1, 0, 'jeden złoty'], [2, 0, 'dwa złote'], [22, 0, 'dwadzieścia dwa złote'], [12, 0, 'dwanaście złotych'], [12, 50, 'dwanaście złotych pięćdziesiąt groszy'], [2, 1, 'dwa złote jeden grosz'], [0, 50, 'pięćdziesiąt groszy'], [1299, 0, 'tysiąc dwieście dziewięćdziesiąt dziewięć złotych'], [2000000, 0, 'dwa miliony złotych']]) assert.equal(s.formatPln?.(zl, gr), expected);
+});
+test('Polish dates use genitive day month and year', () => {
+  assert.equal(s.formatDate?.(4, 10, 2026), 'czwartego października dwa tysiące dwudziestego szóstego roku');
+  assert.equal(s.formatDate(31, 12, 2030), 'trzydziestego pierwszego grudnia dwa tysiące trzydziestego roku');
+  assert.equal(s.formatDate(1, 1, 2000), 'pierwszego stycznia dwutysięcznego roku');
+});
+test('model speech rewrites dates amounts and identifiers while retaining other integers', () => {
+  assert.equal(s.speakable?.('Do zapłaty 349 zł do 04.10.2026.'), 'Do zapłaty trzysta czterdzieści dziewięć złotych do czwartego października dwa tysiące dwudziestego szóstego roku.');
+  assert.equal(s.speakable('12,50 PLN'), 'dwanaście złotych pięćdziesiąt groszy');
+  assert.equal(s.speakable('1 299 zł'), 'tysiąc dwieście dziewięćdziesiąt dziewięć złotych');
+  for (const text of ['2026-10-04', '4 października 2026 r.']) assert.equal(s.speakable(text), s.formatDate(4, 10, 2026));
+  assert.equal(s.speakable(digits), s.digitsToSpokenGroups(digits));
+  assert.equal(s.speakable('12345678'), s.digitsToSpokenGroups('12345678'));
+  for (const text of ['32.13.2026', '31.02.2026', '29.02.2025', '04.10.1999', '3 paczki']) assert.equal(s.speakable(text), text);
+});

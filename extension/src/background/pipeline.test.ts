@@ -234,3 +234,51 @@ test('number-only reply enters readback while wrong page stores no confirmation'
   assert.equal(store.has('pending'), false);
   assert.deepEqual(announced(), ['Na tej stronie nie ma pola numeru przesyłki. Otwórz stronę śledzenia przesyłek InPost.']);
 });
+const emptyDiff = { added: [], removed: [], changed: [], alerts: [] };
+const makeRun = (budget = { max: 3, used: 0 }) => {
+  const id = crypto.randomUUID(); store.set('turn', { phase: 'processing', tabId: 7, startedAt: Date.now(), id });
+  return { turnId: id, tabId: 7, signal: new AbortController().signal, budget };
+};
+const step = { proposal: clickProposal, epoch: 1, docId: 'doc-1', preSnapshot: { ...snapshot, nodes: [button] }, announce: 'none' as const };
+test('third step executes fourth stops and every command owns a fresh budget', async () => {
+  localAdapter(); tabHandler = (_tab, m) => m.type === 'EXECUTE' ? { ok: true, kind: 'click', name: 'Znajdź', role: 'button', diff: emptyDiff } : { ok: true };
+  for (let command = 0; command < 2; command++) {
+    const run = makeRun();
+    for (let i = 0; i < 3; i++) assert.equal(await pipeline.performProposal(run, step), 'done');
+    assert.equal(await pipeline.performProposal(run, step), 'stopped');
+    assert.equal(run.budget.used, 3);
+  }
+  assert.equal(tabCalls.filter(c => c.message.type === 'EXECUTE').length, 6);
+  assert.deepEqual(announced(), ['To wszystko na jedno polecenie. Powiedz, co dalej.', 'To wszystko na jedno polecenie. Powiedz, co dalej.']);
+});
+test('tracking uses two awaited action steps and an injected one-step budget never clicks', async () => {
+  const requests = localAdapter();
+  tabHandler = (_tab, m) => m.type === 'SNAPSHOT' ? { ok: true, docId: 'doc-1', snapshot: { ...snapshot, nodes: [field, button] } } : m.type === 'EXECUTE' ? { ok: true, kind: m.proposal.action, name: 'Znajdź', role: 'button', diff: emptyDiff } : m.type === 'READ_STATUS' ? { ok: true, status: { kind: 'status', title: 'W drodze', description: '349 zł. 44051401359.' } } : { ok: true };
+  let run = makeRun(); await pipeline.runParcelSearch(run, '000000000000000000000001');
+  assert.equal(run.budget.used, 2);
+  assert.deepEqual(tabCalls.filter(c => c.message.type === 'EXECUTE').map(c => c.message.proposal.action), ['fill', 'click']);
+  assert.equal(tabCalls.find(c => c.message.type === 'READ_STATUS')?.message.number, '000000000000000000000001');
+  assert.deepEqual(announced(), ['Status na stronie: W drodze. 349 zł. 44051401359.']);
+  tabCalls.length = 0; run = makeRun({ max: 1, used: 0 });
+  await pipeline.runParcelSearch(run, '12345678');
+  assert.equal(run.budget.used, 1);
+  assert.deepEqual(tabCalls.filter(c => c.message.type === 'EXECUTE').map(c => c.message.proposal.action), ['fill']);
+  assert.deepEqual(announced(), ['To wszystko na jedno polecenie. Powiedz, co dalej.']); assert.deepEqual(requests, []);
+});
+test('a rejected fill is counted and never followed by the search click', async () => {
+  localAdapter(); tabHandler = (_tab, m) => m.type === 'SNAPSHOT' ? { ok: true, docId: 'doc-1', snapshot: { ...snapshot, nodes: [field, button] } } : m.type === 'EXECUTE' ? { ok: false, reason: 'sensitive_fill' } : { ok: true };
+  const run = makeRun(); await pipeline.runParcelSearch(run, '12345678');
+  assert.equal(run.budget.used, 1); assert.equal(tabCalls.filter(c => c.message.type === 'EXECUTE').length, 1);
+  assert.deepEqual(announced(), ['Tego pola nie wypełniam, bo jest na dane poufne.']);
+});
+test('model effect speaks amount and date while local navigation makes no fetch', async () => {
+  withProposal(clickProposal, 'Do zapłaty 349 zł do 04.10.2026.');
+  await pipeline.announceEffect(7, { kind: 'click', name: 'Znajdź', role: 'button' }, { ...emptyDiff, added: ['Nowa treść'] });
+  assert.deepEqual(announced(), ['Do zapłaty trzysta czterdzieści dziewięć złotych do czwartego października dwa tysiące dwudziestego szóstego roku.']);
+  tabCalls.length = 0;
+  const network = localAdapter(), run = makeRun();
+  store.set('pendingEffect', { id: 'j', turnId: run.turnId, tabId: 7, state: 'executed', action: { kind: 'click', name: 'Znajdź', role: 'button' }, preSnapshot: snapshot, startedAt: Date.now(), effect: 'local' });
+  tabHandler = (_tab, m) => m.type === 'SETTLE_DIFF' ? { ok: true, diff: { ...emptyDiff, title: { before: 'T', after: 'Wyniki' } } } : { ok: true };
+  await pipeline.handleReady(7);
+  assert.deepEqual(network, []); assert.deepEqual(announced(), ['Kliknąłem Znajdź. Jesteś teraz na stronie Wyniki.']);
+});

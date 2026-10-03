@@ -7,13 +7,16 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictBool
 ACTION_SCHEMA = {
     "type": "object",
     "properties": {
-        "action": {"type": "string", "enum": ["click", "fill", "none"]},
+        "action": {"type": "string", "enum": ["click", "fill", "choose", "none"]},
         "target": {"type": "string"},
         "text": {"type": "string"},
         "needs_confirmation": {"type": "boolean"},
         "say": {"type": "string"},
+        "option_1": {"type": "string"},
+        "option_2": {"type": "string"},
+        "option_3": {"type": "string"},
     },
-    "required": ["action", "target", "text", "needs_confirmation", "say"],
+    "required": ["action", "target", "text", "needs_confirmation", "say", "option_1", "option_2", "option_3"],
     "additionalProperties": False,
 }
 
@@ -31,7 +34,10 @@ class ActionRequest(StrictModel):
 
 
 class ActionProposal(StrictModel):
-    action: Literal["click", "fill", "none"]
+    action: Literal["click", "fill", "choose", "none"]
+    option_1: str = Field(default="", max_length=32)
+    option_2: str = Field(default="", max_length=32)
+    option_3: str = Field(default="", max_length=32)
     target: str = Field(max_length=32)
     text: str = Field(max_length=500)
     needs_confirmation: StrictBool

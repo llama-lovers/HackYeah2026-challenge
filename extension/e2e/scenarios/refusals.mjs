@@ -20,15 +20,22 @@ export async function run(ctx) {
   const sensitive = await ctx.openPage('/fixtures/sensitive.html');
   const mark = await ctx.upstreamMark();
   await ctx.speak(sensitive, 'kliknij Zapłać');
-  await ctx.waitForLive(sensitive, 'Tej akcji nie wykonam bez potwierdzenia.');
+  await ctx.waitForLive(sensitive, 'Chcę kliknąć „Zapłać”. Potwierdzasz? Powiedz tak albo nie.');
+  await ctx.waitIdle();
+  await ctx.speak(sensitive, 'nie');
+  await ctx.waitForLive(sensitive, 'Anulowałem.');
   await ctx.waitIdle();
   assert(!(await ctx.liveLog(sensitive)).includes('Klikam Zapłać.'));
   assert.notEqual(await sensitive.evaluate('window.__paid'), true);
   assert.equal((await ctx.upstreamSince(mark)).length, 1);
   await ctx.speak(sensitive, 'wpisz 1234 w pole hasło');
-  await ctx.waitForLive(sensitive, 'Tego pola nie wypełniam, bo jest na dane poufne.');
+  await ctx.waitForLive(sensitive, 'Tego pola nie wypełniam, bo jest na dane poufne. Wypełnij je samodzielnie albo poproś o pomoc zaufaną osobę.');
   await ctx.waitIdle();
   assert.equal(await sensitive.evaluate("document.querySelector('[type=password]').value"), 'Tajne!Haslo1');
   assert(!(await ctx.liveLog(sensitive)).some(s => s.startsWith('Wpisuję')));
   assert.notEqual(await sensitive.evaluate('window.__paid'), true);
+  await ctx.speak(sensitive,'wpisz 1234 w pole numer');
+  await ctx.waitForLive(sensitive,'Tego pola nie wypełniam, bo jest na dane poufne. Wypełnij je samodzielnie albo poproś o pomoc zaufaną osobę.'); await ctx.waitIdle();
+  assert.equal(await sensitive.evaluate("document.querySelectorAll('input')[2].value"),'44051401359');
+  assert(!(await ctx.liveLog(sensitive)).some(s=>s.startsWith('Wpisuję')));
 }

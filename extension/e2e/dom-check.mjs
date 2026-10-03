@@ -30,7 +30,7 @@ try {
   const start = Date.now();
   await page.evaluate(`(() => { const el=document.querySelector('#ShipmentNumber'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,'873234987612340872938732'); el.dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('.tracking-form button').click(); })()`);
   await waitFor(() => page.evaluate(`!!document.querySelector('div.loader')`), { timeoutMs: 300, intervalMs: 20, label: 'loader within 300 ms' });
-  await waitFor(() => page.evaluate(`document.body.textContent.includes('Status: W drodze do paczkomatu')`), { timeoutMs: 3000, label: 'tracking result' });
+  await waitFor(() => page.evaluate(`document.body.textContent.includes('W drodze do paczkomatu')`), { timeoutMs: 3000, label: 'tracking result' });
   assert.ok(Date.now() - start < 3000);
   assert.equal(await page.evaluate('location.search'), '?number=873234987612340872938732');
   assert.equal(await page.evaluate(`document.querySelector('.btnSearchMobile').checkVisibility()`), false);
@@ -165,6 +165,103 @@ try {
   const renamedDuringDelay = await page.evaluate(`(async () => { document.body.innerHTML='<button type="button">Pokaż mapę</button><div id="host"></div>'; window.__clicked=false; document.querySelector('button').addEventListener('click', () => { window.__clicked=true; }); const s=__snapTest.takeSnapshot(), id=s.nodes.find(n=>n.role==='button').id; const result=await __snapTest.execute(s.epoch,{action:'click',target:id,text:'',needs_confirmation:false,say:''},{host:document.querySelector('#host'),announce(){ document.querySelector('button').textContent='Pokaż pomoc'; }}); return {result,clicked:window.__clicked}; })()`);
   assert.deepEqual(renamedDuringDelay, { result: { ok: false, reason: 'stale' }, clicked: false });
   console.log('PASS dom-check: semantic drift is refused before the action');
+  // Reusing the same delete control must never delete a record other than the one spoken.
+  for (const mutation of ['unchanged', 'heading', 'buttonBinding', 'rowBinding', 'moveRow', 'announcement', 'commit']) {
+    const recycled = await page.evaluate(`(async () => {
+      document.body.innerHTML='<section data-record="poznan"><h2>Paczka z Poznania</h2><button type="button" data-city="Poznań">Usuń</button></section><section data-record="warsaw"><h2>Paczka z Warszawy</h2></section><div id="host"></div>';
+      const button=document.querySelector('button'); const deleted=[];
+      button.onclick=()=>deleted.push(button.dataset.city);
+      const s=__snapTest.takeSnapshot(), id=s.nodes.find(n=>n.name==='Usuń').id;
+      const proposal={action:'click',target:id,text:'',needs_confirmation:false,say:''};
+      const offered=await __snapTest.execute(s.epoch,proposal,{host:document.querySelector('#host'),announce(){}});
+      const mutate=()=>{
+        if (${JSON.stringify(mutation)}==='heading') document.querySelector('h2').textContent='Paczka z Warszawy';
+        else if (${JSON.stringify(mutation)}==='rowBinding') button.parentElement.dataset.record='warsaw';
+        else if (${JSON.stringify(mutation)}==='moveRow') document.querySelectorAll('section')[1].append(button);
+        else button.dataset.city='Warszawa';
+      };
+      if (!['unchanged','announcement','commit'].includes(${JSON.stringify(mutation)})) mutate();
+      const result=await __snapTest.execute(s.epoch,proposal,{host:document.querySelector('#host'),announce(){if (${JSON.stringify(mutation)}==='announcement') mutate();}},async()=>{if (${JSON.stringify(mutation)}==='commit') mutate();return true;},{confirmed:true,context:'Paczka z Poznania'});
+      return {offered,result,deleted,same:document.querySelector('button')===button,label:button.textContent};
+    })()`);
+    assert.equal(recycled.offered.confirm.name, 'Usuń', mutation);
+    if (mutation === 'unchanged') { assert.equal(recycled.result.ok, true); assert.deepEqual(recycled.deleted, ['Poznań']); }
+    else { assert.deepEqual(recycled.result, {ok:false,reason:'stale'}, mutation); assert.deepEqual(recycled.deleted, [], mutation); }
+    assert.equal(recycled.same, true); assert.equal(recycled.label, 'Usuń');
+  }
+  console.log('PASS dom-check: recycled record, spoken heading and immediate pre-click confirmation binding');
+  await page.goto(server.origin + '/fixtures/consent-banner.html'); await page.evaluate(bundle);
+  const consent = await page.evaluate(`(() => { const s=__snapTest.takeSnapshot();return s.nodes.filter(n=>n.kind==='interactive'&&['button','link'].includes(n.role)).map(n=>{const target=__snapTest.resolveTarget(n.id,s.epoch).target, p={action:'click',target:n.id,text:'',needs_confirmation:false,say:''};return {name:n.name,consent:target.consent,unconfirmed:__snapTest.validateProposal(p,target),confirmed:__snapTest.validateProposal(p,target,{confirmed:true})};}); })()`);
+  for (const name of ['ZAAKCEPTUJ WSZYSTKO', 'ODRZUĆ WSZYSTKO', 'DOSTOSUJ', 'Polityce cookies', 'Zamknij', 'Znajdź']) {
+    const entry = consent.find(n => n.name === name); assert(entry, name);
+    assert.equal(entry.consent, name !== 'Znajdź', name);
+    assert.deepEqual(entry.unconfirmed, name === 'Znajdź' ? { ok: true, kind: 'click' } : { ok: false, reason: 'irreversible' }, name);
+    assert.deepEqual(entry.confirmed, { ok: true, kind: 'click' }, name);
+  }
+  console.log('PASS dom-check: consent containers protect all controls and preserve parcel lookup');
+  for (const container of ['cmp', 'outerDialog', 'plain']) {
+    const shadowConsent = await page.evaluate(`(async () => {
+      const kind=${JSON.stringify(container)};
+      document.body.innerHTML=kind==='outerDialog' ? '<div role="dialog" aria-label="Ustawienia cookies"><div id="shadow"></div></div><div id="host"></div>' : '<div id="'+(kind==='cmp'?'didomi-host':'shadow')+'"></div><div id="host"></div>';
+      const root=document.querySelector(kind==='cmp'?'#didomi-host':'#shadow').attachShadow({mode:'open'});
+      root.innerHTML='<div id="inner"></div>';
+      const nested=root.querySelector('#inner').attachShadow({mode:'open'});
+      nested.innerHTML='<button type="button">Zamknij</button>';
+      let clicks=0; nested.querySelector('button').onclick=()=>clicks++;
+      const s=__snapTest.takeSnapshot(),id=s.nodes.find(n=>n.name==='Zamknij').id;
+      const p={action:'click',target:id,text:'',needs_confirmation:false,say:''};
+      const target=__snapTest.resolveTarget(id,s.epoch).target;
+      const result=await __snapTest.execute(s.epoch,p,{host:document.querySelector('#host'),announce(){}});
+      return {consent:target.consent,result,clicks};
+    })()`);
+    assert.equal(shadowConsent.consent, container !== 'plain', container);
+    if (container === 'plain') { assert.equal(shadowConsent.result.ok,true); assert.equal(shadowConsent.clicks,1); }
+    else { assert.equal(shadowConsent.result.reason,'irreversible'); assert.equal(shadowConsent.result.confirm.category,'consent'); assert.equal(shadowConsent.clicks,0); }
+  }
+  console.log('PASS dom-check: nested shadow CMP and outer cookie dialogs require informed confirmation');
+  const captchaBundle = await bundleForPage(`import {detectCaptcha,waitForParcelStatus,readParcelStatus} from './src/content/tracking.ts'; import {statusSpeech} from './src/shared/messages.pl.ts';globalThis.__captchaTest={detectCaptcha,waitForParcelStatus,readParcelStatus,statusSpeech};`, EXT_DIR);
+  await page.goto(server.origin + '/fixtures/tracking-form.html'); await page.evaluate(captchaBundle);
+  const inlineQuote = await page.evaluate(`(() => {
+    document.body.innerHTML='<div class="parcel-wrapper" data-tracking="12345678"><div class="parcelStatusInfo"><div class="status"><h2>W drodze</h2></div><div class="description">Śledź ją w <a href="#mapa">aplikacji InPost Mobile</a>. Numer: 44051401359. <span>Dwa </span><span>słowa.</span><span hidden>Nie cytuj.</span></div></div></div>';
+    return __captchaTest.readParcelStatus(document,'12345678');
+  })()`);
+  assert.deepEqual(inlineQuote,{kind:'status',title:'W drodze',description:'Śledź ją w aplikacji InPost Mobile. Numer: 44051401359. Dwa słowa.'});
+  for (const exclusion of ['hidden', 'inert', 'aria-hidden="true"', 'style="display:none"', 'style="visibility:hidden"', 'style="opacity:0"']) {
+    const status = await page.evaluate(`(() => {
+      document.body.innerHTML='<div ${exclusion}><div class="parcel-wrapper" data-tracking="12345678"><div class="parcelStatusInfo"><div class="status"><h2>Stary ukryty status</h2></div></div></div></div><div class="parcel-wrapper" data-tracking="12345678"><div class="parcelStatusInfo"><div class="status"><h2>Aktualny widoczny status</h2></div><div class="description">Numer 12345678<span hidden>ukryta treść</span> jest w drodze.</div></div></div>';
+      const result=__captchaTest.readParcelStatus(document,'12345678'); return {result,speech:__captchaTest.statusSpeech(result)};
+    })()`);
+    assert.deepEqual(status.result,{kind:'status',title:'Aktualny widoczny status',description:'Numer 12345678 jest w drodze.'},exclusion);
+    assert.equal(status.speech,'Status na stronie: Aktualny widoczny status. Numer 12345678 jest w drodze.');
+  }
+  const hiddenNodes = await page.evaluate(`(async () => {
+    document.body.innerHTML='<div class="parcel-wrapper" data-tracking="12345678"><div class="parcelStatusInfo"><div class="status"><h2 hidden>Stary tytuł</h2><h2>Widoczny tytuł</h2></div><div class="description" aria-hidden="true">Stary opis</div><div class="description">Widoczny opis</div></div></div>';
+    const status=__captchaTest.readParcelStatus(document,'12345678');
+    document.body.innerHTML='<div class="parcel-wrapper" data-tracking="12345678"><div class="parcelStatusInfo"><div class="error" hidden><p>Stary błąd</p></div></div></div><div inert><div id="typingErrorMsgContainer">Błąd wpisywania</div></div><div class="g-recaptcha" style="position:fixed;top:10px;left:10px;width:304px;height:78px">Captcha</div>';
+    const captcha=await __captchaTest.waitForParcelStatus(document,'12345678',0);
+    document.body.innerHTML='<div aria-hidden="true"><div id="typingErrorMsgContainer">Stary błąd</div></div><div id="typingErrorMsgContainer">Widoczny błąd</div>';
+    const error=await __captchaTest.waitForParcelStatus(document,'12345678',0);
+    return {status,captcha,error};
+  })()`);
+  assert.deepEqual(hiddenNodes,{status:{kind:'status',title:'Widoczny tytuł',description:'Widoczny opis'},captcha:{ok:false,error:'not_found',captcha:true},error:{ok:true,status:{kind:'error',title:'',description:'Widoczny błąd'}}});
+  console.log('PASS dom-check: parcel speech ignores hidden stale wrappers, descendants and errors');
+  await page.goto(server.origin + '/fixtures/tracking-form.html'); await page.evaluate(captchaBundle);
+  const captchaCases = await page.evaluate(`(async () => {
+    const checks=[];
+    checks.push(__captchaTest.detectCaptcha(document));
+    for(const [tag,attribute,value] of [['div','class','g-recaptcha'],['div','class','h-captcha'],['div','class','cf-turnstile'],['iframe','src','about:blank#recaptcha/api2/anchor'],['iframe','src','about:blank#hcaptcha.com'],['iframe','src','about:blank#challenges.cloudflare.com']]) {
+      const el=document.createElement(tag); el.setAttribute(attribute,value); el.style.cssText='position:fixed;top:10px;left:10px;width:304px;height:78px';document.body.append(el);
+      checks.push(__captchaTest.detectCaptcha(document)); el.remove();
+    }
+    const el=document.createElement('div');el.className='g-recaptcha';document.body.append(el);
+    for(const style of ['display:none;width:304px;height:78px','visibility:hidden;width:304px;height:78px','opacity:0;width:304px;height:78px','position:fixed;top:10000px;width:304px;height:78px','position:fixed;left:-10000px;width:304px;height:78px','position:fixed;top:10px;left:10px;width:0;height:0']) {el.style.cssText=style;checks.push(__captchaTest.detectCaptcha(document));}
+    el.style.cssText='position:fixed;top:10px;left:10px;width:304px;height:78px';
+    const missing=await __captchaTest.waitForParcelStatus(document,'12345678',0); el.remove();
+    return {checks,missing};
+  })()`);
+  assert.deepEqual(captchaCases.checks,[false,true,true,true,true,true,true,false,false,false,false,false,false]);
+  assert.deepEqual(captchaCases.missing,{ok:false,error:'not_found',captcha:true});
+  console.log('PASS dom-check: visible viewport captcha variants and missing-status flag');
 } catch (error) {
   console.error(`FAIL dom-check: ${error.stack}\n${lastText}`); process.exitCode = 1;
 } finally {

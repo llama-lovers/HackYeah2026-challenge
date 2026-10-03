@@ -25,7 +25,7 @@ def fake_reply(body: dict) -> dict:
         utterance = extract(content, "utterance").strip().removesuffix(".")
         lines = [match.groupdict() for line in extract(content, "page_snapshot").splitlines()
                  if (match := re.match(r'^(?P<role>[a-z]+) (?P<id>e\d+) "(?P<name>[^"]*)"(?P<rest>.*)$', line))]
-        payload = {"action": "none", "target": "", "text": "", "needs_confirmation": False, "say": "Nie rozumiem polecenia."}
+        payload = {"action": "none", "target": "", "text": "", "needs_confirmation": False, "say": "Nie rozumiem polecenia.", "option_1": "", "option_2": "", "option_3": ""}
         target, action, text = None, None, ""
         if utterance.casefold().startswith("kliknij nieistniejący"):
             target, action = {"id": "e999"}, "click"
@@ -34,6 +34,12 @@ def fake_reply(body: dict) -> dict:
             target = next((line for line in lines if line["role"] in {"button", "link", "checkbox", "radio", "menuitem", "tab"} and line["name"].casefold() == expected), None)
             action = "click"
             payload["say"] = "Nie widzę takiego elementu."
+            if target is None:
+                matches = [line for line in lines if line["role"] in {"button", "link", "checkbox", "radio", "menuitem", "tab"} and expected in line["name"].casefold()]
+                if len(matches) >= 2:
+                    payload.update(action="choose", say="")
+                    for i, line in enumerate(matches[:3], 1):
+                        payload[f"option_{i}"] = line["id"]
         elif match := re.match(r"wpisz (.*?) w przycisk (.+)$", utterance, re.I):
             text, expected = match.groups()
             target = next((line for line in lines if line["role"] == "button" and line["name"].casefold() == expected.casefold()), None)

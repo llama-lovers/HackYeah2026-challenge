@@ -146,7 +146,13 @@ def test_fake_action_rules(utterance, action, target, text, say):
     from tests.fake_openrouter import fake_reply
     snapshot = 'textbox e3 "Enter parcel numbers separated by commas" placeholder="Wpisz numer przesyłki"\nbutton e4 "Znajdź"'
     result = json.loads(fake_reply(fake_body(utterance, snapshot))["choices"][0]["message"]["content"])
-    assert result == {"action": action, "target": target, "text": text, "say": say, "needs_confirmation": False}
+    assert result == {"action": action, "target": target, "text": text, "say": say, "needs_confirmation": False, "option_1": "", "option_2": "", "option_3": ""}
+
+def test_fake_choose_uses_containing_matches_in_snapshot_order():
+    from tests.fake_openrouter import fake_reply
+    snapshot = '\n'.join(f'button e{i} "Szczegóły paczki z {city}"' for i, city in enumerate(["Krakowa", "Gdańska", "Poznania"], 1))
+    result = json.loads(fake_reply(fake_body("kliknij szczegóły paczki", snapshot))["choices"][0]["message"]["content"])
+    assert result == {"action": "choose", "target": "", "text": "", "say": "", "needs_confirmation": False, "option_1": "e1", "option_2": "e2", "option_3": "e3"}
 
 
 @pytest.mark.parametrize("diff,expected", [({"alerts": ["alert"], "added": ["added"]}, "alert"), ({"added": ["added"]}, "added"), ({"changed": [{"name": "Pole", "what": "enabled"}]}, "Pole enabled"), ({"title": {"after": "title"}}, "title"), ({"path": {"after": "/path"}}, "/path"), ({}, None)])

@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateProposal } from './validate.ts';
+import * as validation from './validate.ts';
 import type { Proposal, ResolvedTarget, RejectReason } from './validate.ts';
 const proposal: Proposal = { action: 'click', target: 'e1', text: '', needs_confirmation: false, say: '' };
-const target: ResolvedTarget = { exists: true, epochMatches: true, connected: true, visible: true, disabled: false, role: 'button', sensitive: false, name: 'Znajdź', maxLength: null, submitsNonLookupForm: false, sideEffectSignals: false, knownSafe: true, drifted: false };
+const target: ResolvedTarget = { exists: true, epochMatches: true, connected: true, visible: true, disabled: false, role: 'button', sensitive: false, name: 'Znajdź', maxLength: null, submitsNonLookupForm: false, sideEffectSignals: false, knownSafe: true, drifted: false, consent: false };
 const cases: [RejectReason, Partial<Proposal>, Partial<ResolvedTarget> | null][] = [
   ['unknown_action', { action: 'navigate' }, {}], ['not_found', {}, null],
   ['not_found', {}, { exists: false }], ['stale', {}, { epochMatches: false }],
@@ -42,4 +43,28 @@ test('refuses clicks without a positive safe classification (CR-03)', () => {
 });
 test('refuses a control whose semantic identity drifted since the snapshot (CR-09)', () => {
   for (const action of ['click', 'fill']) assert.deepEqual(validateProposal({ ...proposal, action, text: 'x' }, { ...target, role: action === 'click' ? 'button' : 'textbox', drifted: true }), { ok: false, reason: 'stale' });
+});
+test('confirmation permits irreversible and model-flagged actions only', () => {
+  const validate = validateProposal as any;
+  assert.deepEqual(validate(proposal, { ...target, name: 'Zapłać' }, { confirmed: true }), { ok: true, kind: 'click' });
+  assert.deepEqual(validate({ ...proposal, needs_confirmation: true }, target, { confirmed: true }), { ok: true, kind: 'click' });
+  for (const [reason, p, t] of [...cases.filter(c => !['needs_confirmation', 'irreversible'].includes(c[0])), ['stale', {}, { drifted: true }] as const]) {
+    assert.deepEqual(validate({ ...proposal, ...p }, t === null ? null : { ...target, ...t }, { confirmed: true }), { ok: false, reason });
+  }
+});
+test('only the two policy rejections are confirmable', () => {
+  const check = (validation as any).isConfirmable;
+  for (const reason of ['needs_confirmation', 'irreversible']) assert.equal(check?.(reason), true);
+  for (const reason of ['stale', 'hidden', 'disabled', 'sensitive_fill', 'not_found']) assert.equal(check(reason), false);
+});
+test('consent container overrides benign labels and known-safe controls', () => {
+  for (const name of ['Zamknij', 'Znajdź', 'Polityce cookies']) {
+    const consentTarget = { ...target, name, consent: true };
+    assert.deepEqual(validateProposal(proposal, consentTarget), { ok: false, reason: 'irreversible' });
+    assert.deepEqual(validateProposal(proposal, consentTarget, { confirmed: true }), { ok: true, kind: 'click' });
+  }
+});
+test('model can add confirmation but cannot remove payment or consent classification', () => {
+  assert.deepEqual(validateProposal({ ...proposal, needs_confirmation: true }, { ...target, name: 'Pokaż mapę' }), { ok: false, reason: 'needs_confirmation' });
+  for (const t of [{ ...target, name: 'Zapłać' }, { ...target, consent: true }]) assert.deepEqual(validateProposal({ ...proposal, needs_confirmation: false }, t), { ok: false, reason: 'irreversible' });
 });

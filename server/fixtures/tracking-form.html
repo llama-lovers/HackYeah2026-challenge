@@ -25,15 +25,24 @@ document.querySelector('.mobileSearchInput').addEventListener('keyup', e => { do
 document.querySelector('.tracking-form').addEventListener('submit', e => {
   e.preventDefault(); const n = input.value;
   if (!/^(\d{8}|\d{24})$/.test(n)) { error.textContent='Wpisz poprawny numer przesyłki (8 lub 24 cyfry).'; return; }
+  if (Array.from(document.querySelectorAll('.parcel-wrapper')).some(el => el.getAttribute('data-tracking') === n)) return;
   history.pushState(null, '', '?number=' + n);
   const result = document.querySelector('.track-parcel');
   result.innerHTML='<div class="loader" role="progressbar" aria-busy="true">Ładowanie…</div>';
   setTimeout(() => {
     result.replaceChildren();
-    const wrapper = document.createElement('div'); wrapper.className='parcel-wrapper';
-    const number = document.createElement('p'); number.textContent='Przesyłka nr: ' + n;
-    const status = document.createElement('p'); status.textContent=n.startsWith('0000') ? 'There was an unknown problem during tracking process. Please verify provided number and try again.' : 'Status: W drodze do paczkomatu';
-    wrapper.append(number, status); result.append(wrapper);
+    if (n === '111111111111111111111111') {
+      const captcha = document.createElement('div'); captcha.className='g-recaptcha'; captcha.dataset.sitekey='fixture'; captcha.style.cssText='width:304px;height:78px;border:1px solid #888'; captcha.textContent='Potwierdź, że nie jesteś robotem'; result.append(captcha); return;
+    }
+    const wrapper = document.createElement('div'); wrapper.className='parcel-wrapper'; wrapper.setAttribute('data-tracking', n);
+    const section = document.createElement('div'); section.className='parcel-section';
+    const info = document.createElement('div'); info.className='parcelStatusInfo';
+    if (n === '999999999999999999999999') info.innerHTML='<div class="error"><p class="paragraph--component -small"><img alt="error icon">Ups... Nie znaleźliśmy paczki o podanym numerze. Spróbuj go wpisać ponownie.</p></div>';
+    else {
+      info.innerHTML='<div class="status"><h2>W drodze do paczkomatu</h2></div><div class="description">Przesyłka jest w drodze do paczkomatu docelowego. Śledź ją w <a href="#mapa">aplikacji InPost Mobile</a>. Numer referencyjny: 44051401359.</div><div class="textnumber">Przesyłka nr:</div><div class="number copyNumber" role="button" tabindex="0" aria-label="Skopiuj numer przesyłki"></div>';
+      info.querySelector('.number').textContent=n;
+    }
+    section.append(info); wrapper.append(section); result.append(wrapper);
     const svg = document.querySelector('svg'), circle = svg.querySelector('circle');
     let flip=false;
     const timer = setInterval(() => { flip=!flip; circle.setAttribute('r', flip ? '6' : '5'); if (flip) { const title=document.createElementNS('http://www.w3.org/2000/svg','title'); title.textContent='animacja'; svg.append(title); } else svg.querySelector('title')?.remove(); }, 50);

@@ -4,6 +4,8 @@ import { execute } from './executor.ts';
 import { startSettleWatch } from './settle.ts';
 import { diffSnapshots } from '../shared/diff.ts';
 import type { ToContent } from '../shared/protocol.ts';
+import { isParcelDigits } from '../shared/parcel.ts';
+import { waitForParcelStatus } from './tracking.ts';
 const globals = globalThis as typeof globalThis & { __voiceAgentInitialized?: boolean };
 if (!globals.__voiceAgentInitialized) {
   globals.__voiceAgentInitialized = true;
@@ -11,6 +13,10 @@ if (!globals.__voiceAgentInitialized) {
   chrome.runtime.onMessage.addListener((message: ToContent, sender, respond) => {
     if (sender.id !== chrome.runtime.id) return;
     switch (message.type) {
+      case 'READ_STATUS':
+        if (!isParcelDigits(message.number)) { respond({ ok: false, error: 'invalid_number' }); break; }
+        void waitForParcelStatus(document, message.number).then(respond).catch(() => respond({ ok: false, error: 'not_found' }));
+        return true;
       case 'PING': respond({ ok: true }); break;
       case 'ANNOUNCE': announcer.announce(message.text); respond({ ok: true }); break;
       case 'SNAPSHOT':
@@ -22,7 +28,7 @@ if (!globals.__voiceAgentInitialized) {
         if (message.docId !== getDocumentId()) { respond({ ok: false, reason: 'stale' }); break; }
         void execute(message.epoch, message.proposal, announcer, async () => {
           try { return ((await chrome.runtime.sendMessage({ type: 'EXECUTING', turnId: message.turnId, jobId: message.jobId })) as { ok?: boolean } | undefined)?.ok === true; } catch { return false; }
-        }).then(respond).catch(() => respond({ ok: false, reason: 'not_found' }));
+        }, { confirmed: message.confirmed === true, context: message.context }).then(respond).catch(() => respond({ ok: false, reason: 'not_found' }));
         return true;
       case 'SETTLE_DIFF':
         void (async () => {

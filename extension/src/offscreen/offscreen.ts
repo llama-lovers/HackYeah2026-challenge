@@ -1,5 +1,6 @@
 import type { FromOffscreenBody, ToOffscreen, TranscribeResponse } from '../shared/protocol.ts';
 import { downsample, encodeWav16 } from '../shared/wav.ts';
+import { RECORDING_CAP_MS } from '../shared/limits.ts';
 // One capture per turn. Every event it emits carries its turn id, and a capture of an older turn is discarded
 // (microphone released, upload aborted, no further events) as soon as a different turn starts.
 interface Capture {
@@ -80,7 +81,7 @@ async function start(turnId: string) {
       if (c.discarded) { void release(c); return; }
       c.state = 'recording';
       await emit(c, { type: 'MIC_OPEN' });
-      c.timer = setTimeout(() => stop(c), 15000);
+      c.timer = setTimeout(() => stop(c), RECORDING_CAP_MS);
       if (c.stopRequested) stop(c);
       return;
     }
@@ -92,7 +93,7 @@ async function start(turnId: string) {
       void emit(c, { type: 'TRANSCRIBE_ERROR', code: 'stt_failed' });
       discard(c);
     };
-    recorder.onstart = () => { c.state = 'recording'; void emit(c, { type: 'MIC_OPEN' }); c.timer = setTimeout(() => stop(c), 15000); if (c.stopRequested) stop(c); };
+    recorder.onstart = () => { c.state = 'recording'; void emit(c, { type: 'MIC_OPEN' }); c.timer = setTimeout(() => stop(c), RECORDING_CAP_MS); if (c.stopRequested) stop(c); };
     recorder.onstop = async () => {
       void release(c);
       if (c.discarded || c.failed) return;

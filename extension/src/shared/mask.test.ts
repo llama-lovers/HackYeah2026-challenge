@@ -2,6 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomInt } from 'node:crypto';
 import { maskText, isPesel, isLuhn, isNrb, isSensitiveField } from './mask.ts';
+test('verification access pickup and token fields are sensitive but parcel hints remain safe', () => {
+  for(const label of ['Kod weryfikacyjny','Kod autoryzacyjny','Kod potwierdzający','Kod odbioru','Kod dostępu','Token']) assert.equal(isSensitiveField({tag:'input',label}),true,label);
+  for(const label of ['Enter parcel numbers separated by commas','Wpisz numer przesyłki','tokenizacja','spinka']) assert.equal(isSensitiveField({tag:'input',label}),false,label);
+});
 
 test('masks checksum-valid secrets and preserves parcel numbers', () => {
   const vectors = [

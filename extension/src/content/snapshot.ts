@@ -124,14 +124,14 @@ function sensitive(el: Element): boolean {
   return isSensitiveField({ tag: tagOf(el), type: getAttr(el, 'type') ?? '', autocomplete: getAttr(el, 'autocomplete') ?? '',
     name: getAttr(el, 'name') ?? '', id: idOf(el), label: nativeLabel(el), placeholder: getAttr(el, 'placeholder') ?? '', ariaLabel: computeName(el) });
 }
-function visibleText(el: Element): string {
+export function visibleText(el: Element, preserveWhitespace = false): string {
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tagOf(el))) return '';
   const parts: string[] = [];
   for (const child of el.childNodes) {
     if (child.nodeType === Node.TEXT_NODE) parts.push(child.textContent ?? '');
-    else if (child instanceof Element && !SKIP.has(tagOf(child)) && !subtreeExcluded(child) && getComputedStyle(child).visibility !== 'hidden') parts.push(visibleText(child));
+    else if (child instanceof Element && !SKIP.has(tagOf(child)) && !subtreeExcluded(child) && getComputedStyle(child).visibility !== 'hidden') parts.push(visibleText(child, preserveWhitespace));
   }
-  return collapse(parts.join(' '));
+  return preserveWhitespace ? parts.join('') : collapse(parts.join(' '));
 }
 function states(el: Element): SnapState {
   const state: SnapState = {};
@@ -258,7 +258,46 @@ function sideEffectSignals(el: Element): boolean {
 }
 // Any failure while collecting signals is itself ambiguous, so it counts as a signal.
 function safeSideEffectSignals(el: Element): boolean { try { return sideEffectSignals(el); } catch { return true; } }
+const CONSENT_CONTAINER_SELECTOR = '#didomi-host, [id^="didomi-"], [class*="didomi-"], #onetrust-banner-sdk, #onetrust-consent-sdk, #CybotCookiebotDialog';
+function consentSignal(el: Element): boolean {
+  try {
+    for (let ancestor: Element | null = el; ancestor; ancestor = parentElement(ancestor)) {
+      if (matchesSel(ancestor, CONSENT_CONTAINER_SELECTOR)) return true;
+      if (!matchesSel(ancestor, '[role="dialog"], [role="alertdialog"], dialog')) continue;
+      const text = [getAttr(ancestor, 'aria-label'), computeName(ancestor), labelText(ancestor).slice(0, 300)].join(' ').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').replace(/ł/g, 'l');
+      if (/cookie|ciasteczk|zgod|prywatnosc|privacy|consent/.test(text)) return true;
+    }
+    return false;
+  } catch { return true; }
+}
 function safeDecode(text: string): string { try { return decodeURIComponent(text); } catch { return text; } }
+// Match the snapshot's composed traversal so the heading used in numbered speech
+// belongs to the same control, even when controls or rows are recycled.
+function headingBefore(target: Element): string {
+  let heading = '', found = false;
+  const walk = (el: Element, suppressProse = false) => {
+    if (found || SKIP.has(tagOf(el)) || idOf(el) === LIVE_REGION_ID || subtreeExcluded(el)) return;
+    if (el === target) { found = true; return; }
+    const role = roleOf(el), visible = isElementVisible(el);
+    if (visible && INTERACTIVE.has(role)) return;
+    if (visible && role === 'heading' && !suppressProse) { heading = visibleText(el); suppressProse = true; }
+    if (shadowOf(el)) for (const child of shadowOf(el)!.children) walk(child, suppressProse);
+    for (const child of childrenOf(el)) walk(child, suppressProse);
+  };
+  if (document.body) walk(document.body);
+  return heading;
+}
+const recordIds = new WeakMap<Element, number>();
+let nextRecordId = 0;
+function recordBinding(el: Element): unknown[] {
+  const records: unknown[] = [];
+  for (let owner: Element | null = el; owner; owner = parentElement(owner)) {
+    if (!recordIds.has(owner)) recordIds.set(owner, ++nextRecordId);
+    const attributes: Attr[] = Array.from(getter(ELEMENT, 'attributes').call(owner));
+    records.push([recordIds.get(owner), attributes.filter(a => a.name === 'id' || a.name.startsWith('data-')).map(a => [a.name, a.value]).sort((a,b) => a[0]!.localeCompare(b[0]!))]);
+  }
+  return records;
+}
 // Semantic identity of a snapshot target: what the model's proposal was about. Any change (role, name, purpose, destination, form
 // association) means the id now denotes a different control, which must be re-proposed rather than silently reinterpreted.
 function identityOf(el: Element): string {
@@ -266,10 +305,10 @@ function identityOf(el: Element): string {
   const form = control?.form ?? closestOf(el, 'form');
   return JSON.stringify([roleOf(el), computeName(el), tagOf(el), getAttr(el, 'type'), getAttr(el, 'name'), getAttr(el, 'placeholder'), getAttr(el, 'autocomplete'),
     el instanceof HTMLAnchorElement ? el.href : null, getAttr(el, 'formaction'), getAttr(el, 'formmethod'),
-    form ? [getAttr(form, 'action'), getAttr(form, 'method'), getAttr(form, 'id')] : null]);
+    form ? [getAttr(form, 'action'), getAttr(form, 'method'), getAttr(form, 'id')] : null, headingBefore(el), recordBinding(el)]);
 }
 function safeDrifted(el: Element, identity: string): boolean { try { return identityOf(el) !== identity; } catch { return true; } }
-export function resolveTarget(id: string, requestedEpoch: number): { target: ResolvedTarget | null; element: Element | null; node: SnapNode | null } {
+export function resolveTarget(id: string, requestedEpoch: number, expectedContext?: string): { target: ResolvedTarget | null; element: Element | null; node: SnapNode | null } {
   const entry = idMap.get(id), element = entry?.ref.deref() ?? null;
   if (!entry || !element) return { target: null, element: null, node: null };
   const liveState = states(element), role = roleOf(element), name = safe(computeName(element));
@@ -277,6 +316,6 @@ export function resolveTarget(id: string, requestedEpoch: number): { target: Res
   const maxLength = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.maxLength : -1;
   return { element, node, target: { exists: true, epochMatches: requestedEpoch === epoch, connected: connectedOf(element),
     visible: isElementVisible(element), disabled: isElementDisabled(element), role, sensitive: !!(entry.node.state?.sensitive || liveState.sensitive), name,
-    maxLength: maxLength >= 0 ? maxLength : null, submitsNonLookupForm: submitsNonLookupForm(element), drifted: safeDrifted(element, entry.identity), sideEffectSignals: safeSideEffectSignals(element), knownSafe: safeKnownSafeClick(element) } };
+    maxLength: maxLength >= 0 ? maxLength : null, submitsNonLookupForm: submitsNonLookupForm(element), drifted: safeDrifted(element, entry.identity) || (!!expectedContext && safe(headingBefore(element)) !== expectedContext), sideEffectSignals: safeSideEffectSignals(element), knownSafe: safeKnownSafeClick(element), consent: consentSignal(element) } };
 }
 export function getLastSnapshot(): Snapshot | null { return last; }

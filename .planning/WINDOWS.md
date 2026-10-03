@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 7
+open_count: 9
 waived_count: 0
 fixed_count: 0
-total_count: 7
-last_updated: 2026-10-03T14:32:27.729Z
+total_count: 9
+last_updated: 2026-10-03T19:54:17.652Z
 ---
 
 # Broken Windows Ledger
@@ -22,6 +22,8 @@ last_updated: 2026-10-03T14:32:27.729Z
 | 5 | 01 | unrun-verify | extension/src/content/live-region.ts |  | NVDA/VoiceOver speech of ordered and identical consecutive messages in browse mode and with parcel-field focus is pending real screen-reader testing. | open |  | 2026-10-03T14:32:27.279Z |  |
 | 6 | 01 | unrun-verify | extension/e2e/scenarios/privacy.mjs |  | DevTools Network-tab masking proof on the sensitive fixture and live InPost parcel page is pending end-of-phase human review. | open |  | 2026-10-03T14:32:27.499Z |  |
 | 7 | 01 | unrun-verify | extension/src/background/pipeline.ts |  | Live InPost fill/search/navigation with real provider Polish effect quality and total latency is pending an API key and human review. | open |  | 2026-10-03T14:32:27.729Z |  |
+| 8 | 02 | unrun-verify | extension/src/shared/messages.pl.ts |  | NVDA must verify complete Polish numbered option lists, contextual confirmation and trusted-person secret/captcha refusals. | open |  | 2026-10-03T19:54:17.404Z |  |
+| 9 | 02 | unrun-verify | server/app/schemas.py |  | Real pinned OpenRouter model choose schema and ambiguous live InPost commands remain unverified offline (also covered by WINDOWS entry 1). | open |  | 2026-10-03T19:54:17.652Z |  |
 
 ````json
 [
@@ -113,6 +115,32 @@ last_updated: 2026-10-03T14:32:27.729Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-10-03T14:32:27.729Z",
+    "resolved_at": null,
+    "milestone": null
+  },
+  {
+    "id": 8,
+    "kind": "unrun-verify",
+    "phase": "02",
+    "file": "extension/src/shared/messages.pl.ts",
+    "line": null,
+    "description": "NVDA must verify complete Polish numbered option lists, contextual confirmation and trusted-person secret/captcha refusals.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-10-03T19:54:17.404Z",
+    "resolved_at": null,
+    "milestone": null
+  },
+  {
+    "id": 9,
+    "kind": "unrun-verify",
+    "phase": "02",
+    "file": "server/app/schemas.py",
+    "line": null,
+    "description": "Real pinned OpenRouter model choose schema and ambiguous live InPost commands remain unverified offline (also covered by WINDOWS entry 1).",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-10-03T19:54:17.652Z",
     "resolved_at": null,
     "milestone": null
   }

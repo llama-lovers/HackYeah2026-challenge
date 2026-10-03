@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { STT_FAILED } from '../../src/shared/messages.pl.ts';
+import { RECORDING_CAP_MS } from '../../src/shared/limits.ts';
 import { waitForTarget, attach, evaluate } from '../cdp.mjs';
 export const name = 'wav';
+export const timeoutMs = 60000;
 export const buildEnv = { AUDIO_FORMAT: 'wav' };
 export async function run(ctx) {
   const page = await ctx.openPage('/fixtures/tracking-form.html');
@@ -30,7 +32,7 @@ export async function run(ctx) {
   const clickCount = (await ctx.liveLog(page)).filter(text => text === 'Klikam Znajdź.').length;
   await ctx.toggle();
   await ctx.waitForLive(page, log => log.filter(text => text === 'Słucham.').length > listeningCount);
-  await ctx.waitForLive(page, log => log.filter(text => text === 'Klikam Znajdź.').length > clickCount, 22000);
+  await ctx.waitForLive(page, log => log.filter(text => text === 'Klikam Znajdź.').length > clickCount, RECORDING_CAP_MS + 7000);
   await ctx.waitIdle();
   assert.equal((await ctx.upstreamSince(mark)).length, 1);
   assert(await offscreenEval('globalThis.__testTracks.every(track => track.readyState === "ended")'));

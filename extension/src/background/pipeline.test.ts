@@ -184,3 +184,53 @@ test('EXECUTE is bound to the document that produced the snapshot (CR-09)', asyn
   await pipeline.handleOffscreenMessage(message(id, { type: 'TRANSCRIPT', text: 'kliknij Znajdź' }));
   assert.equal(executeMessage.docId, 'doc-1');
 });
+const field = { kind: 'interactive', id: 'e2', role: 'textbox', name: 'Enter parcel numbers separated by commas', hint: 'Wpisz numer przesyłki' };
+function localAdapter(nodes: any[] = [field, button]) {
+  const requests: string[] = [];
+  g.fetch = async (url: string) => { requests.push(String(url)); throw new Error('unexpected network'); };
+  tabHandler = (_tab, m) => m.type === 'SNAPSHOT' ? { ok: true, docId: 'doc-1', snapshot: { ...snapshot, nodes } } : { ok: true };
+  return requests;
+}
+async function localCommand(text: string, tabId = 7) {
+  const id = crypto.randomUUID();
+  store.set('turn', { phase: 'processing', tabId, startedAt: Date.now(), id });
+  return pipeline.runCommand(id, tabId, text);
+}
+const parcelPending = (extra: object = {}) => ({ kind: 'confirm_parcel', digits: '12345678', id: 'p', tabId: 7, createdAt: Date.now(), reprompts: 0, ...extra });
+test('yes with no pending dialog speaks locally without snapshot or network', async () => {
+  const network = localAdapter(); await localCommand('tak');
+  assert.deepEqual(announced(), ['Nie ma nic do potwierdzenia.']);
+  assert.deepEqual(network, []); assert.equal(tabCalls.length, 1);
+});
+test('expired confirmation cannot execute and speaks expiry', async () => {
+  const network = localAdapter(); store.set('pending', parcelPending({ createdAt: Date.now() - 60001 }));
+  await localCommand('tak');
+  assert.deepEqual(announced(), ['Minął czas na odpowiedź. Powiedz polecenie jeszcze raz.']);
+  assert.deepEqual(network, []); assert(!tabCalls.some(c => c.message.type === 'EXECUTE'));
+  assert.equal(store.has('pending'), false);
+});
+test('pending belongs to its tab and is removed when that tab closes', async () => {
+  localAdapter(); store.set('pending', parcelPending({ tabId: 9 }));
+  await localCommand('tak'); assert.equal(store.has('pending'), false);
+  assert.deepEqual(announced(), ['Nie ma nic do potwierdzenia.']);
+  store.set('pending', parcelPending()); await pipeline.handleTabRemoved(7); assert.equal(store.has('pending'), false);
+});
+test('confirmation reprompts once then cancels with no execution', async () => {
+  localAdapter(); store.set('pending', parcelPending());
+  await localCommand('co innego'); assert.equal((store.get('pending') as any).reprompts, 1);
+  await localCommand('co innego'); assert.equal(store.has('pending'), false);
+  assert.deepEqual(announced(), ['Powiedz tak albo nie.', 'Anulowałem.']);
+});
+test('number-only reply enters readback while wrong page stores no confirmation', async () => {
+  const network = localAdapter();
+  await localCommand('sprawdź status przesyłki');
+  assert.equal((store.get('pending') as any).kind, 'await_parcel_number');
+  assert.deepEqual(announced(), ['Podaj numer przesyłki.']);
+  await localCommand('1234 5678');
+  assert.equal((store.get('pending') as any).digits, '12345678');
+  assert.deepEqual(network, []);
+  localAdapter([]); store.delete('pending'); tabCalls.length = 0;
+  await localCommand('sprawdź status przesyłki numer 12345678');
+  assert.equal(store.has('pending'), false);
+  assert.deepEqual(announced(), ['Na tej stronie nie ma pola numeru przesyłki. Otwórz stronę śledzenia przesyłek InPost.']);
+});

@@ -1,5 +1,5 @@
 import { SESSION_KEYS, PENDING_EFFECT_MAX_AGE_MS } from '../shared/protocol.ts';
-import type { FromOffscreen, SnapshotResult, CandidatesResult, ExecuteResult, ExecutedAction, EffectResponse, PendingEffectJob, SettleDiffResult, ReadStatusResult } from '../shared/protocol.ts';
+import type { PingResult, FromOffscreen, SnapshotResult, CandidatesResult, ExecuteResult, ExecutedAction, EffectResponse, PendingEffectJob, SettleDiffResult, ReadStatusResult } from '../shared/protocol.ts';
 import type { PageDiff, Snapshot } from '../shared/snapshot-format.ts';
 import { parseIntent, isCaptchaLabel } from '../shared/intent.ts';
 import { wordsToDigits, digitsToSpokenGroups, speakable } from '../shared/polish-speech.ts';
@@ -14,6 +14,8 @@ import type { Proposal, ConfirmCategory } from '../shared/validate.ts';
 import { onToggle, isStale } from '../shared/turn.ts';
 import type { TurnState } from '../shared/turn.ts';
 import { maskText } from '../shared/mask.ts';
+import { parseConversationCommand, savesForReplay, makeReplay, decodeReplay, decodeAnnounceAck } from '../shared/conversation.ts';
+import type { OutputIntent } from '../shared/conversation.ts';
 import { parseExploreCommand, decodeSummary, decodeActions, decodeRecheck, ACTION_CAPS } from '../shared/exploration.ts';
 import { toModelText, spokenName } from '../shared/snapshot-format.ts';
 import * as msg from '../shared/messages.pl.ts';
@@ -59,12 +61,34 @@ export async function preparePageAccess(tab: chrome.tabs.Tab): Promise<boolean> 
   return false;
 }
 export function speakTts(text: string): void { chrome.tts.speak(text, { lang: 'pl-PL', rate: 1.0 }); }
-export async function announce(tabId: number | undefined, text: string): Promise<void> {
+// Every spoken line carries an intent. Only 'substantive' lines that the page acknowledged as written become the replay buffer.
+export async function announce(tabId: number | undefined, text: string, intent: OutputIntent = 'substantive'): Promise<void> {
   if (!text.trim()) return;
+  let ack: unknown;
   try {
     if (tabId === undefined) throw new Error('no_tab');
-    await chrome.tabs.sendMessage(tabId, { type: 'ANNOUNCE', text }, { frameId: 0 });
-  } catch { speakTts(text); }
+    ack = await chrome.tabs.sendMessage(tabId, { type: 'ANNOUNCE', text }, { frameId: 0 });
+  } catch { speakTts(text); return; }
+  if (tabId !== undefined && savesForReplay(intent)) await rememberDelivered(tabId, text, ack);
+}
+// One entry only, written after delivery was acknowledged; a message that cannot be stored exactly (too long, no document id) clears
+// the buffer instead of leaving an older response that "powtórz" would replay as if it were the latest one.
+async function rememberDelivered(tabId: number, text: string, ack: unknown): Promise<void> {
+  const docId = decodeAnnounceAck(ack);
+  if (!docId) return;
+  try {
+    const entry = makeReplay(tabId, docId, text);
+    if (entry) await chrome.storage.session.set({ [SESSION_KEYS.lastResponse]: entry });
+    else await chrome.storage.session.remove(SESSION_KEYS.lastResponse);
+  } catch { /* replay is a convenience; a storage failure must never disturb the turn */ }
+}
+async function dropReplayOf(tabId: number): Promise<void> {
+  try {
+    const stored = (await chrome.storage.session.get(SESSION_KEYS.lastResponse))[SESSION_KEYS.lastResponse];
+    if (stored === undefined) return;
+    const entry = decodeReplay(stored);
+    if (!entry || entry.tabId === tabId) await chrome.storage.session.remove(SESSION_KEYS.lastResponse);
+  } catch { /* nothing stored that could be replayed */ }
 }
 export async function announceEffect(tabId: number, action: ExecutedAction, diff: PageDiff, signal?: AbortSignal): Promise<void> {
   if (isEmptyDiff(diff)) { await announce(tabId, msg.noChange(action.kind, action.name)); return; }
@@ -98,7 +122,7 @@ async function toggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promi
   if (tab.id === undefined) return;
   const state = await getTurn();
   const { next, effect } = onToggle(state, tab.id, Date.now());
-  if (effect === 'busy') { await announce(tab.id, msg.BUSY); return; }
+  if (effect === 'busy') { await announce(tab.id, msg.BUSY, 'status'); return; }
   if (effect === 'start') {
     if (__E2E__ && opts?.stubText !== undefined) next.stubText = opts.stubText;
     // Stale recovery: cancel the abandoned turn (requests, pending effect job) before a replacement may start.
@@ -107,11 +131,11 @@ async function toggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promi
     await setTurn(next);
     if (!(await preparePageAccess(tab))) { await resetTurnIf(next.id); return; }
     try { await ensureOffscreen(); await chrome.runtime.sendMessage({ target: 'offscreen', type: 'REC_START', turnId: next.id }); }
-    catch { await announce(tab.id, msg.MIC_NO_DEVICE); await resetTurnIf(next.id); }
+    catch { await announce(tab.id, msg.MIC_NO_DEVICE, 'status'); await resetTurnIf(next.id); }
   } else {
     await setTurn(next);
     try { await chrome.runtime.sendMessage({ target: 'offscreen', type: 'REC_STOP', turnId: state.id, ...(__E2E__ && state.stubText !== undefined ? { stubText: state.stubText } : {}) }); }
-    catch { await announce(state.tabId, msg.STT_FAILED); await resetTurnIf(state.id); }
+    catch { await announce(state.tabId, msg.STT_FAILED, 'status'); await resetTurnIf(state.id); }
   }
 }
 export async function handleOffscreenMessage(message: FromOffscreen): Promise<void> {
@@ -123,15 +147,15 @@ async function onOffscreen(message: FromOffscreen): Promise<(() => Promise<void>
   // Events of a turn that no longer owns the pipeline (recovered, replaced or finished) are dropped silently.
   if (turn.phase === 'idle' || !turn.id || message.turnId !== turn.id) return;
   switch (message.type) {
-    case 'MIC_OPEN': await announce(turn.tabId, msg.LISTENING); break;
+    case 'MIC_OPEN': await announce(turn.tabId, msg.LISTENING, 'status'); break;
     case 'REC_STOPPED':
       if (turn.phase === 'recording') await setTurn({ ...turn, phase: 'processing', startedAt: Date.now() });
-      await announce(turn.tabId, msg.PROCESSING); break;
+      await announce(turn.tabId, msg.PROCESSING, 'status'); break;
     case 'MIC_ERROR':
-      await announce(turn.tabId, message.code === 'not_allowed' ? msg.MIC_DENIED : msg.MIC_NO_DEVICE);
+      await announce(turn.tabId, message.code === 'not_allowed' ? msg.MIC_DENIED : msg.MIC_NO_DEVICE, 'status');
       if (message.code === 'not_allowed') await chrome.runtime.openOptionsPage().catch(() => {});
       await resetTurnIf(turn.id); break;
-    case 'TRANSCRIBE_ERROR': await announce(turn.tabId, msg.STT_FAILED); await resetTurnIf(turn.id); break;
+    case 'TRANSCRIBE_ERROR': await announce(turn.tabId, msg.STT_FAILED, 'status'); await resetTurnIf(turn.id); break;
     case 'TRANSCRIPT':
       return async () => {
         let outcome: 'handoff' | void = undefined;
@@ -218,6 +242,21 @@ async function parcelReadback(run: CommandRun, digits: string): Promise<void> {
     await say(msg.parcelReadback(digitsToSpokenGroups(digits)));
   } catch { await say(msg.SNAPSHOT_FAILED); }
 }
+// "powtórz": replays the exact text of the last substantive message delivered in THIS tab and document. It reads one session entry and the
+// document id; it never takes a snapshot, calls the proxy or touches the page, and the replay itself is not stored as a new response.
+async function runRepeat(run: CommandRun): Promise<void> {
+  const { turnId, tabId } = run;
+  const say = async (text: string, intent: OutputIntent) => { if (await ownsTurn(turnId)) await announce(tabId, text, intent); };
+  let stored: unknown;
+  try { stored = (await chrome.storage.session.get(SESSION_KEYS.lastResponse))[SESSION_KEYS.lastResponse]; } catch { stored = undefined; }
+  const entry = decodeReplay(stored);
+  let docId: string | undefined;
+  try { const reply = await chrome.tabs.sendMessage(tabId, { type: 'PING' }, { frameId: 0 }) as PingResult | undefined; docId = typeof reply?.docId === 'string' ? reply.docId : undefined; } catch { docId = undefined; }
+  if (entry && docId !== undefined && entry.tabId === tabId && entry.docId === docId) { await say(entry.text, 'replay'); return; }
+  // Another document or tab, or damaged data: the buffer is dead weight and must not be offered again.
+  if (stored !== undefined && docId !== undefined && (!entry || entry.tabId === tabId)) { try { await chrome.storage.session.remove(SESSION_KEYS.lastResponse); } catch { /* best effort */ } }
+  await say(msg.REPLAY_EMPTY, 'status');
+}
 // Read-only exploration: it requests a snapshot and speaks; it never sends EXECUTE, /api/action or stores a pending interaction.
 async function runSummary(run: CommandRun): Promise<void> {
   const { turnId, tabId, signal } = run;
@@ -267,11 +306,18 @@ async function runActions(run: CommandRun): Promise<void> {
 export async function runCommand(turnId: string, tabId: number | undefined, rawText: string): Promise<'handoff' | void> {
   const signal = turnSignal(turnId);
   const run: CommandRun = { turnId, tabId: tabId!, signal, budget: createBudget() };
-  const say = async (text: string) => { if (await ownsTurn(turnId)) await announce(tabId, text); };
+  const say = async (text: string, intent: OutputIntent = 'substantive') => { if (await ownsTurn(turnId)) await announce(tabId, text, intent); };
   const text = rawText.trim();
-  if (!text) { await say(msg.NOTHING_HEARD); return; }
+  if (!text) { await say(msg.NOTHING_HEARD, 'status'); return; }
   const intent = parseIntent(text);
   if (intent.kind === 'captcha_request') { await say(msg.CAPTCHA_REFUSAL); return; }
+  // Complete conversation phrases are answered locally and BEFORE the pending interaction is claimed: "powtórz" must be able to
+  // repeat a confirmation question without consuming it. They never reach a snapshot, the model or an action.
+  const command = parseConversationCommand(text);
+  if (command) {
+    if (tabId === undefined) { await say(msg.SNAPSHOT_FAILED, 'status'); return; }
+    return runRepeat(run);
+  }
   const pending = await claimPending(turnId);
   if (pending && pending.tabId === tabId) {
     const reply = routeReply(pending, text, Date.now());
@@ -285,14 +331,14 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
       const outcome = await performProposal(run, { proposal: pending.proposal, epoch: pending.epoch, docId: pending.docId, preSnapshot: pending.preSnapshot, announce: 'local', confirmed: true, category: pending.category, context: pending.context });
       return outcome === 'handoff' ? 'handoff' : undefined;
     }
-    if (reply.kind === 'cancel') { await say(msg.CANCELLED); return; }
-    if (reply.kind === 'reprompt') { await setPending(turnId, { ...pending, reprompts: pending.reprompts + 1 }); await say(pending.kind === 'choose_option' ? msg.choiceReprompt(pending.options.length) : msg.CONFIRM_REPROMPT); return; }
+    if (reply.kind === 'cancel') { await say(msg.CANCELLED, 'status'); return; }
+    if (reply.kind === 'reprompt') { await setPending(turnId, { ...pending, reprompts: pending.reprompts + 1 }); await say(pending.kind === 'choose_option' ? msg.choiceReprompt(pending.options.length) : msg.CONFIRM_REPROMPT, 'status'); return; }
     if (reply.kind === 'number') return parcelReadback(run, reply.digits);
     if (reply.kind === 'bad_number') { await setPending(turnId, { ...pending, reprompts: pending.reprompts + 1 }); await say(reply.count === null ? msg.PARCEL_NOT_UNDERSTOOD : msg.parcelWrongLength(reply.count)); return; }
     if (reply.kind === 'expired') {
       const number = wordsToDigits(text);
       const parcelReply = (pending.kind === 'await_parcel_number' || pending.kind === 'confirm_parcel') && number.ok && number.digits.length > 0;
-      if (parcelReply || pending.kind === 'choose_option' || intent.kind === 'yes' || intent.kind === 'no') { await say(msg.CONFIRM_EXPIRED); return; }
+      if (parcelReply || pending.kind === 'choose_option' || intent.kind === 'yes' || intent.kind === 'no') { await say(msg.CONFIRM_EXPIRED, 'status'); return; }
     }
   }
   // Complete exploration phrases are routed locally, before any action proposal can be requested.
@@ -306,7 +352,7 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
     await say(!intent.rest ? msg.PARCEL_ASK_NUMBER : !number.ok ? msg.PARCEL_NOT_UNDERSTOOD : msg.parcelWrongLength(number.digits.length));
     return;
   }
-  if (intent.kind === 'yes' || intent.kind === 'no') { await say(msg.NOTHING_TO_CONFIRM); return; }
+  if (intent.kind === 'yes' || intent.kind === 'no') { await say(msg.NOTHING_TO_CONFIRM, 'status'); return; }
   let result: SnapshotResult;
   try {
     if (tabId === undefined) throw new Error('no_tab');
@@ -362,6 +408,7 @@ export function expireJob(jobId: string): Promise<void> {
 }
 export function handleTabRemoved(tabId: number): Promise<void> {
   return runSerial(async () => {
+    await dropReplayOf(tabId);
     if ((await getPending())?.tabId === tabId) await chrome.storage.session.remove(SESSION_KEYS.pending);
     const [turn, job] = [await getTurn(), await getJob()];
     if (job?.tabId === tabId) await chrome.storage.session.remove(JOB);
@@ -370,6 +417,8 @@ export function handleTabRemoved(tabId: number): Promise<void> {
 }
 export async function handleReady(tabId: number): Promise<void> {
   const job = await runSerial(async () => {
+    // A new document in this tab: whatever it said before belongs to a page that no longer exists.
+    await dropReplayOf(tabId);
     const job = await getJob();
     if (!job || job.tabId !== tabId || job.state === 'claimed') return undefined;
     // A new document before the page confirmed the action: nothing was done, so there is nothing to describe.

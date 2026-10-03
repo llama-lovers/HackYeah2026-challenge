@@ -18,8 +18,12 @@ if (!globals.__voiceAgentInitialized) {
         if (!isParcelDigits(message.number)) { respond({ ok: false, error: 'invalid_number' }); break; }
         void waitForParcelStatus(document, message.number).then(respond).catch(() => respond({ ok: false, error: 'not_found' }));
         return true;
-      case 'PING': respond({ ok: true }); break;
-      case 'ANNOUNCE': announcer.announce(message.text); respond({ ok: true }); break;
+      case 'PING': respond({ ok: true, docId: getDocumentId() }); break;
+      case 'ANNOUNCE':
+        // The acknowledgement follows the queued live-region mutation, so the worker may treat the text as delivered.
+        if (typeof message.text !== 'string') { respond({ ok: false }); break; }
+        void announcer.announce(message.text).then(() => respond({ ok: true, docId: getDocumentId() }), () => respond({ ok: false }));
+        return true;
       case 'SNAPSHOT':
         try { respond({ ok: true, snapshot: takeSnapshot(document, { excludeRoot: announcer.host }), docId: getDocumentId() }); }
         catch { respond({ ok: false, error: 'snapshot_failed' }); }

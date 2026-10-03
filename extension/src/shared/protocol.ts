@@ -2,9 +2,12 @@ import type { Proposal, RejectReason, ConfirmCategory } from './validate.ts';
 import type { Snapshot, PageDiff } from './snapshot-format.ts';
 export const LIVE_REGION_ID = 'voice-agent-live-region';
 export const COMMAND_TOGGLE = 'toggle-listening';
-export const SESSION_KEYS = { turn: 'turn', pendingEffect: 'pendingEffect', pending: 'pending' } as const;
+export const SESSION_KEYS = { turn: 'turn', pendingEffect: 'pendingEffect', pending: 'pending', lastResponse: 'lastResponse' } as const;
 export const PENDING_EFFECT_MAX_AGE_MS = 15000;
 export type ToContent = { type: 'PING' } | { type: 'SNAPSHOT' } | { type: 'EXECUTE'; epoch: number; proposal: Proposal; turnId: string; jobId: string; docId: string; confirmed?: boolean; context?: string } | { type: 'ANNOUNCE'; text: string } | { type: 'SETTLE_DIFF'; preSnapshot: Snapshot } | { type: 'READ_STATUS'; number: string } | { type: 'CANDIDATES' } | { type: 'RECHECK_CANDIDATES'; docId: string; epoch: number; ids: string[] };
+// Delivery acknowledgement of an ANNOUNCE: sent only after the live-region mutation happened, and it names the document that spoke.
+export type AnnounceResult = { ok: true; docId: string };
+export type PingResult = { ok: true; docId?: string };
 export type ParcelStatus = { kind: 'status' | 'error'; title: string; description: string };
 export type ReadStatusResult = { ok: true; status: ParcelStatus } | { ok: false; error: 'not_found' | 'invalid_number'; captcha?: boolean };
 export type SnapshotResult = { ok: true; snapshot: Snapshot; docId: string } | { ok: false; error: 'snapshot_failed' };

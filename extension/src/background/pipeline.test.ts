@@ -641,3 +641,103 @@ test('access never carries over: the next command on a new document prepares tha
   await pipeline.handleToggle({ id: 7, url: 'https://other.example/b' } as chrome.tabs.Tab);
   assert.equal(injected.length, 2); assert.deepEqual(sent.map(m => m.type), ['REC_START', 'REC_STOP', 'REC_START']);
 });
+// Conversation replay (OUT-03): exact, local, document-scoped, session-only.
+const SUMMARY_TEXT = 'To strona „Śledzenie przesyłek”. Zażółć gęślą jaźń: żółć.';
+let currentDoc = 'doc-1';
+function replayAdapter(opts: { announceAck?: (m: any) => unknown } = {}) {
+  currentDoc = 'doc-1'; exploreCalls.length = 0;
+  g.fetch = async (url: string, init: RequestInit) => { exploreCalls.push({ url: String(url), body: JSON.parse(String(init?.body ?? 'null')) }); return { ok: true, json: async () => ({ sentences: [SUMMARY_TEXT.slice(0, 33)], candidate_ids: [] }) }; };
+  tabHandler = (_tab, m) => m.type === 'ANNOUNCE' ? (opts.announceAck ? opts.announceAck(m) : { ok: true, docId: currentDoc })
+    : m.type === 'PING' ? { ok: true, docId: currentDoc } : m.type === 'SNAPSHOT' ? { ok: true, docId: currentDoc, snapshot: { ...snapshot, nodes: [field, button] } } : { ok: true };
+}
+const replayStored = () => store.get('lastResponse') as any;
+const untouched = () => { assert.equal(exploreCalls.length, 0); assert(!tabCalls.some(c => ['SNAPSHOT', 'EXECUTE', 'CANDIDATES'].includes(c.message.type))); assert.equal(store.has('pending'), false); assert.equal(store.has('pendingEffect'), false); };
+test('"powtórz" replays the exact delivered text through new live-region writes, twice, without any model or page action', async () => {
+  replayAdapter();
+  await pipeline.announce(7, SUMMARY_TEXT);
+  assert.deepEqual(replayStored(), { tabId: 7, docId: 'doc-1', text: SUMMARY_TEXT });
+  tabCalls.length = 0;
+  await localCommand('Powtórz.'); await localCommand('powtórz');
+  assert.deepEqual(announced(), [SUMMARY_TEXT, SUMMARY_TEXT]);
+  assert.deepEqual(replayStored(), { tabId: 7, docId: 'doc-1', text: SUMMARY_TEXT });
+  untouched();
+});
+test('listening, processing, busy, pre-action lines and the replay itself never replace the saved response', async () => {
+  replayAdapter();
+  await pipeline.announce(7, SUMMARY_TEXT);
+  for (const [text, intent] of [['Słucham.', 'status'], ['Przetwarzam.', 'status'], ['Jeszcze pracuję.', 'status'], ['Klikam Znajdź.', 'pre_action'], ['Powtórzony tekst.', 'replay']] as const) await pipeline.announce(7, text, intent);
+  assert.equal(replayStored().text, SUMMARY_TEXT);
+  await pipeline.handleToggle({ id: 7, url: 'https://example.com/' } as chrome.tabs.Tab);
+  await pipeline.handleOffscreenMessage(message((await turn()).id, { type: 'REC_STOPPED' }));
+  assert.equal(replayStored().text, SUMMARY_TEXT);
+  tabCalls.length = 0; await localCommand('powtórz');
+  assert.deepEqual(announced(), [SUMMARY_TEXT]);
+  // A later substantive message, including a recoverable error, becomes the new response.
+  await pipeline.announce(7, 'Nie udało się opisać tej strony. Spróbuj jeszcze raz za chwilę.');
+  tabCalls.length = 0; await localCommand('powtórz');
+  assert.deepEqual(announced(), ['Nie udało się opisać tej strony. Spróbuj jeszcze raz za chwilę.']);
+});
+test('with nothing to repeat a fixed Polish recovery with a next step is spoken and nothing is requested', async () => {
+  replayAdapter();
+  await localCommand('powtórz');
+  assert.deepEqual(announced(), ['Nie mam nic do powtórzenia. Zapytaj na przykład, co tu jest.']);
+  assert.equal(store.has('lastResponse'), false); untouched();
+  // The recovery sentence is a status: it does not become something to repeat.
+  tabCalls.length = 0; await localCommand('powtórz');
+  assert.deepEqual(announced(), ['Nie mam nic do powtórzenia. Zapytaj na przykład, co tu jest.']);
+});
+test('a response is saved only after the page acknowledged the live-region write', async () => {
+  replayAdapter({ announceAck: () => { throw new Error('port closed'); } });
+  await pipeline.announce(7, SUMMARY_TEXT);
+  assert.equal(store.has('lastResponse'), false); assert.deepEqual(spoken, [SUMMARY_TEXT]);
+  for (const ack of [{ ok: true }, { ok: false, docId: 'doc-1' }, undefined, null]) {
+    spoken.length = 0; replayAdapter({ announceAck: () => ack });
+    await pipeline.announce(7, SUMMARY_TEXT);
+    assert.equal(store.has('lastResponse'), false, JSON.stringify(ack));
+  }
+});
+test('replay is scoped to the tab and document that spoke and dies with them', async () => {
+  replayAdapter();
+  await pipeline.announce(7, SUMMARY_TEXT);
+  // Another tab asks: nothing to repeat there.
+  tabCalls.length = 0; await localCommand('powtórz', 9);
+  assert.deepEqual(announced(), ['Nie mam nic do powtórzenia. Zapytaj na przykład, co tu jest.']); assert.equal(replayStored().text, SUMMARY_TEXT);
+  // A navigation announces a new document before it can speak: the old response is gone.
+  await pipeline.handleReady(7); assert.equal(store.has('lastResponse'), false);
+  // Even if the invalidation were lost, a different document id is never replayed and the stale entry is removed.
+  await pipeline.announce(7, SUMMARY_TEXT); currentDoc = 'doc-2';
+  tabCalls.length = 0; await localCommand('powtórz');
+  assert.deepEqual(announced(), ['Nie mam nic do powtórzenia. Zapytaj na przykład, co tu jest.']); assert.equal(store.has('lastResponse'), false);
+  // Closing the tab removes its response; another tab's response is kept.
+  currentDoc = 'doc-1'; await pipeline.announce(7, SUMMARY_TEXT);
+  await pipeline.handleTabRemoved(9); assert.equal(replayStored().text, SUMMARY_TEXT);
+  await pipeline.handleTabRemoved(7); assert.equal(store.has('lastResponse'), false);
+  untouched();
+});
+test('replay data is bounded, shape-checked on read and never written for oversized or damaged input', async () => {
+  replayAdapter();
+  await pipeline.announce(7, SUMMARY_TEXT);
+  await pipeline.announce(7, 'x'.repeat(2001));
+  assert.equal(store.has('lastResponse'), false, 'an oversized message clears rather than leaves an older response');
+  store.set('lastResponse', { tabId: 7, docId: 'doc-1', text: SUMMARY_TEXT, extra: 'x' });
+  tabCalls.length = 0; await localCommand('powtórz');
+  assert.deepEqual(announced(), ['Nie mam nic do powtórzenia. Zapytaj na przykład, co tu jest.']); assert.equal(store.has('lastResponse'), false);
+  // Replay content never reaches persistent storage: only session storage is ever written for it.
+  assert.equal(JSON.stringify([...store.keys()]).includes('lastResponse'), false);
+});
+test('"powtórz" repeats a pending confirmation question without consuming it', async () => {
+  replayAdapter();
+  const question = 'Chcę kliknąć „Zapłać”. Potwierdzasz? Powiedz tak albo nie.';
+  await pipeline.announce(7, question);
+  store.set('pending', { kind: 'confirm_parcel', digits: '12345678', id: 'p', tabId: 7, createdAt: Date.now(), reprompts: 0 });
+  tabCalls.length = 0; await localCommand('powtórz');
+  assert.deepEqual(announced(), [question]); assert.equal((store.get('pending') as any).reprompts, 0);
+  assert(!tabCalls.some(c => c.message.type === 'EXECUTE' || c.message.type === 'SNAPSHOT'));
+});
+test('dictation that contains the word still goes to the validated action route', async () => {
+  replayAdapter(); await pipeline.announce(7, SUMMARY_TEXT);
+  g.fetch = async (url: string, init: RequestInit) => { exploreCalls.push({ url: String(url), body: JSON.parse(String(init.body)) }); return { ok: true, json: async () => ({ action: 'none', target: '', text: '', needs_confirmation: false, say: 'Nie rozumiem polecenia.' }) }; };
+  tabCalls.length = 0; await localCommand('wpisz powtórz w pole numer');
+  assert.equal(exploreCalls.length, 1); assert(exploreCalls[0]!.url.endsWith('/api/action'));
+  assert.equal(replayStored().text === SUMMARY_TEXT, false, 'the later answer replaced it as a normal substantive message');
+});

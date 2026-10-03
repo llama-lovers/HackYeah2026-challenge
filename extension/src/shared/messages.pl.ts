@@ -116,3 +116,4 @@ export function actionsList(items: ExplorationCandidate[], incomplete: boolean):
   const joined = phrases.length === 1 ? phrases[0]! : phrases.slice(0, -1).join(', ') + ' i ' + phrases.at(-1)!;
   return speakable((incomplete ? 'Na początku strony możesz ' : 'Możesz ') + joined + '.');
 }
+export const REPLAY_EMPTY = 'Nie mam nic do powtórzenia. Zapytaj na przykład, co tu jest.';

@@ -55,7 +55,7 @@ Conventions: code, identifiers and commits in English; every user-facing message
 ### Backend Proxy
 
 - [ ] **PROXY-01**: A Python (FastAPI) proxy holds the OpenRouter API key from environment variables; no key exists in the extension or repo
-- [ ] **PROXY-02**: The proxy forwards chat (Claude via OpenRouter, structured JSON output) and transcription requests, pins the model, and caps request size and tokens
+- [x] **PROXY-02**: The proxy forwards chat (Claude via OpenRouter, structured JSON output) and transcription requests, pins the model, and caps request size and tokens
 - [ ] **PROXY-03**: The proxy never logs request or response bodies
 
 ### InPost Scenario
@@ -134,7 +134,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SAFE-06 | Phase 2 | Pending |
 | SAFE-07 | Phase 4 | Pending |
 | PROXY-01 | Phase 1 | Pending |
-| PROXY-02 | Phase 1 | Pending |
+| PROXY-02 | Phase 1 | Complete |
 | PROXY-03 | Phase 1 | Pending |
 | INPOST-01 | Phase 2 | Pending |
 | INPOST-02 | Phase 2 | Pending |

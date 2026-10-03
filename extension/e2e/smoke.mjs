@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { matchesSince } from './live-log.mjs';
 import { launchChromium, connect, waitForTarget, attach, evaluate, openPage, waitFor, startProcess, EXT_DIR, SERVER_DIR } from './cdp.mjs';
 const requested = process.argv.slice(2);
 const scenarios = [];
@@ -49,9 +50,11 @@ try {
       const toggle = opts => swEval(`globalThis.__voiceAgentTest.toggle(${JSON.stringify(opts) ?? 'undefined'})`);
       const turnState = () => swEval('globalThis.__voiceAgentTest.state()');
       const waitIdle = timeoutMs => waitFor(async () => (await turnState()).phase === 'idle', { timeoutMs: timeoutMs ?? 10000, label: 'idle turn' });
+      // Each speak() marks the end of the page's live log; waits for a message then only look at entries added since that mark.
+      const marks = new WeakMap();
       const waitForLive = (page, expected, timeoutMs) => waitFor(async () => {
         const log = await liveLog(page);
-        return typeof expected === 'function' ? expected(log) : log.includes(expected);
+        return typeof expected === 'function' ? expected(log) : matchesSince(log, marks.get(page), expected);
       }, { timeoutMs: timeoutMs ?? 10000, label: 'live announcement' });
       const upstream = async () => (await readFile(record, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
       const ctx = {
@@ -63,6 +66,7 @@ try {
           return page;
         },
         async speak(page, stubText) {
+          marks.set(page, (await liveLog(page)).length);
           await toggle({ stubText }); await waitForLive(page, 'Słucham.');
           await new Promise(resolve => setTimeout(resolve, 800));
           await toggle(); await waitForLive(page, 'Przetwarzam.');
@@ -71,8 +75,18 @@ try {
         upstreamSince: async mark => (await upstream()).slice(mark),
         proxyOutput: () => proxy.output(),
       };
-      let timer;
-      try { await Promise.race([scenario.run(ctx), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Scenario timeout')), scenario.timeoutMs ?? 30000); })]); }
+      // A timed-out scenario keeps running in the background, so its browser is discarded (never reused) and its late calls fail on the closed connection.
+      let timer, timedOut = false;
+      const running = Promise.resolve().then(() => scenario.run(ctx));
+      running.catch(() => {});
+      try { await Promise.race([running, new Promise((_, reject) => { timer = setTimeout(() => { timedOut = true; reject(new Error('Scenario timeout')); }, scenario.timeoutMs ?? 30000); })]); }
+      catch (error) {
+        if (timedOut) {
+          client?.close(); await browser?.close(); client = undefined; browser = undefined; lastBuild = undefined;
+          await Promise.race([running.catch(() => {}), new Promise(resolve => setTimeout(resolve, 2000))]);
+        }
+        throw error;
+      }
       finally { clearTimeout(timer); }
       passed++;
       console.log(`PASS ${scenario.name} (${Date.now() - started} ms)`);

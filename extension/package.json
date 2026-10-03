@@ -6,7 +6,7 @@
     "build": "node scripts/build.mjs",
     "e2e": "node e2e/smoke.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --test \"src/**/*.test.ts\"",
+    "test": "node --test \"src/**/*.test.ts\" \"e2e/*.test.mjs\"",
     "dom-check": "node e2e/dom-check.mjs"
   },
   "devDependencies": {

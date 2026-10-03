@@ -219,7 +219,27 @@ try {
     else { assert.equal(shadowConsent.result.reason,'irreversible'); assert.equal(shadowConsent.result.confirm.category,'consent'); assert.equal(shadowConsent.clicks,0); }
   }
   console.log('PASS dom-check: nested shadow CMP and outer cookie dialogs require informed confirmation');
-  const captchaBundle = await bundleForPage(`import {detectCaptcha,waitForParcelStatus} from './src/content/tracking.ts';globalThis.__captchaTest={detectCaptcha,waitForParcelStatus};`, EXT_DIR);
+  const captchaBundle = await bundleForPage(`import {detectCaptcha,waitForParcelStatus,readParcelStatus} from './src/content/tracking.ts'; import {statusSpeech} from './src/shared/messages.pl.ts';globalThis.__captchaTest={detectCaptcha,waitForParcelStatus,readParcelStatus,statusSpeech};`, EXT_DIR);
+  await page.goto(server.origin + '/fixtures/tracking-form.html'); await page.evaluate(captchaBundle);
+  for (const exclusion of ['hidden', 'inert', 'aria-hidden="true"', 'style="display:none"', 'style="visibility:hidden"', 'style="opacity:0"']) {
+    const status = await page.evaluate(`(() => {
+      document.body.innerHTML='<div ${exclusion}><div class="parcel-wrapper" data-tracking="12345678"><div class="parcelStatusInfo"><div class="status"><h2>Stary ukryty status</h2></div></div></div></div><div class="parcel-wrapper" data-tracking="12345678"><div class="parcelStatusInfo"><div class="status"><h2>Aktualny widoczny status</h2></div><div class="description">Numer 12345678<span hidden>ukryta treść</span> jest w drodze.</div></div></div>';
+      const result=__captchaTest.readParcelStatus(document,'12345678'); return {result,speech:__captchaTest.statusSpeech(result)};
+    })()`);
+    assert.deepEqual(status.result,{kind:'status',title:'Aktualny widoczny status',description:'Numer 12345678 jest w drodze.'},exclusion);
+    assert.equal(status.speech,'Status na stronie: Aktualny widoczny status. Numer 12345678 jest w drodze.');
+  }
+  const hiddenNodes = await page.evaluate(`(async () => {
+    document.body.innerHTML='<div class="parcel-wrapper" data-tracking="12345678"><div class="parcelStatusInfo"><div class="status"><h2 hidden>Stary tytuł</h2><h2>Widoczny tytuł</h2></div><div class="description" aria-hidden="true">Stary opis</div><div class="description">Widoczny opis</div></div></div>';
+    const status=__captchaTest.readParcelStatus(document,'12345678');
+    document.body.innerHTML='<div class="parcel-wrapper" data-tracking="12345678"><div class="parcelStatusInfo"><div class="error" hidden><p>Stary błąd</p></div></div></div><div inert><div id="typingErrorMsgContainer">Błąd wpisywania</div></div><div class="g-recaptcha" style="position:fixed;top:10px;left:10px;width:304px;height:78px">Captcha</div>';
+    const captcha=await __captchaTest.waitForParcelStatus(document,'12345678',0);
+    document.body.innerHTML='<div aria-hidden="true"><div id="typingErrorMsgContainer">Stary błąd</div></div><div id="typingErrorMsgContainer">Widoczny błąd</div>';
+    const error=await __captchaTest.waitForParcelStatus(document,'12345678',0);
+    return {status,captcha,error};
+  })()`);
+  assert.deepEqual(hiddenNodes,{status:{kind:'status',title:'Widoczny tytuł',description:'Widoczny opis'},captcha:{ok:false,error:'not_found',captcha:true},error:{ok:true,status:{kind:'error',title:'',description:'Widoczny błąd'}}});
+  console.log('PASS dom-check: parcel speech ignores hidden stale wrappers, descendants and errors');
   await page.goto(server.origin + '/fixtures/tracking-form.html'); await page.evaluate(captchaBundle);
   const captchaCases = await page.evaluate(`(async () => {
     const checks=[];

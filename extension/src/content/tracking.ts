@@ -1,22 +1,34 @@
 import { collapse } from '../shared/snapshot-format.ts';
 import { READ_STATUS_CAP_MS } from '../shared/limits.ts';
 import type { ParcelStatus, ReadStatusResult } from '../shared/protocol.ts';
+import { isElementVisible, visibleText } from './snapshot.ts';
 export function detectCaptcha(doc: Document): boolean {
   const view = doc.defaultView;
   if (!view) return false;
   return Array.from(doc.querySelectorAll('.g-recaptcha, .h-captcha, .cf-turnstile, iframe[src*="recaptcha/api2/anchor"], iframe[src*="hcaptcha.com"], iframe[src*="challenges.cloudflare.com"]')).some(el => {
     const box = el.getBoundingClientRect();
-    return el.checkVisibility({checkOpacity:true,checkVisibilityCSS:true}) && box.width > 0 && box.height > 0 && box.bottom > 0 && box.right > 0 && box.top < view.innerHeight && box.left < view.innerWidth;
+    return isElementVisible(el) && box.bottom > 0 && box.right > 0 && box.top < view.innerHeight && box.left < view.innerWidth;
   });
 }
 export function readParcelStatus(doc: Document, digits: string): ParcelStatus | null {
-  const wrapper = Array.from(doc.querySelectorAll('.parcel-wrapper')).find(el => el.getAttribute('data-tracking') === digits);
-  if (!wrapper) return null;
-  const title = collapse(wrapper.querySelector('.parcelStatusInfo .status h2')?.textContent ?? '');
-  const description = collapse(wrapper.querySelector('.parcelStatusInfo .description')?.textContent ?? '');
-  if (title) return { kind: 'status', title, description };
-  const error = collapse(wrapper.querySelector('.parcelStatusInfo .error p')?.textContent ?? '');
-  return error ? { kind: 'error', title: '', description: error } : null;
+  for (const wrapper of doc.querySelectorAll('.parcel-wrapper')) {
+    if (wrapper.getAttribute('data-tracking') !== digits) continue;
+    // Checking each result node also checks its wrapper and composed ancestors.
+    const title = eligibleText(wrapper, '.parcelStatusInfo .status h2');
+    const description = eligibleText(wrapper, '.parcelStatusInfo .description');
+    if (title) return { kind: 'status', title, description };
+    const error = eligibleText(wrapper, '.parcelStatusInfo .error p');
+    if (error) return { kind: 'error', title: '', description: error };
+  }
+  return null;
+}
+function eligibleText(root: Document | Element, selector: string): string {
+  for (const el of root.querySelectorAll(selector)) {
+    if (!isElementVisible(el)) continue;
+    const text = collapse(visibleText(el));
+    if (text) return text;
+  }
+  return '';
 }
 export async function waitForParcelStatus(doc: Document, digits: string, capMs = READ_STATUS_CAP_MS): Promise<ReadStatusResult> {
   const start = Date.now();
@@ -25,7 +37,7 @@ export async function waitForParcelStatus(doc: Document, digits: string, capMs =
     if (status) return { ok: true, status };
     await new Promise(resolve => setTimeout(resolve, 100));
   } while (Date.now() - start < capMs);
-  const description = collapse(doc.querySelector('#typingErrorMsgContainer')?.textContent ?? '');
+  const description = eligibleText(doc, '#typingErrorMsgContainer');
   if (description) return { ok: true, status: { kind: 'error', title: '', description } };
   return { ok: false, error: 'not_found', captcha: detectCaptcha(doc) };
 }

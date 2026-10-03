@@ -124,7 +124,7 @@ function sensitive(el: Element): boolean {
   return isSensitiveField({ tag: tagOf(el), type: getAttr(el, 'type') ?? '', autocomplete: getAttr(el, 'autocomplete') ?? '',
     name: getAttr(el, 'name') ?? '', id: idOf(el), label: nativeLabel(el), placeholder: getAttr(el, 'placeholder') ?? '', ariaLabel: computeName(el) });
 }
-function visibleText(el: Element): string {
+export function visibleText(el: Element): string {
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tagOf(el))) return '';
   const parts: string[] = [];
   for (const child of el.childNodes) {

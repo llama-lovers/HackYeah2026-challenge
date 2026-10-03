@@ -1,6 +1,8 @@
 import { createAnnouncer } from './live-region.ts';
 import { takeSnapshot } from './snapshot.ts';
 import { execute } from './executor.ts';
+import { startSettleWatch } from './settle.ts';
+import { diffSnapshots } from '../shared/diff.ts';
 import type { ToContent } from '../shared/protocol.ts';
 const globals = globalThis as typeof globalThis & { __voiceAgentInitialized?: boolean };
 if (!globals.__voiceAgentInitialized) {
@@ -18,6 +20,15 @@ if (!globals.__voiceAgentInitialized) {
       case 'EXECUTE':
         void execute(message.epoch, message.proposal, announcer).then(respond).catch(() => respond({ ok: false, reason: 'not_found' }));
         return true;
+      case 'SETTLE_DIFF':
+        void (async () => {
+          try {
+            await startSettleWatch({ ignore: el => announcer.host.contains(el) });
+            respond({ ok: true, diff: diffSnapshots(message.preSnapshot, takeSnapshot(document, { excludeRoot: announcer.host })) });
+          } catch { respond({ ok: false, error: 'snapshot_failed' }); }
+        })();
+        return true;
     }
   });
+  void chrome.runtime.sendMessage({ type: 'READY' }).catch(() => {});
 }

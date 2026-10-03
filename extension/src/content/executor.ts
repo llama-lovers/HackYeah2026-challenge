@@ -6,7 +6,7 @@ import type { Proposal } from '../shared/validate.ts';
 import type { ExecuteResult } from '../shared/protocol.ts';
 import { spokenName } from '../shared/snapshot-format.ts';
 import { clickPre, fillPre } from '../shared/messages.pl.ts';
-export async function execute(epoch: number, proposal: Proposal, announcer: { host: HTMLElement; announce(text: string): void }): Promise<ExecuteResult> {
+export async function execute(epoch: number, proposal: Proposal, announcer: { host: HTMLElement; announce(text: string): void | Promise<void> }): Promise<ExecuteResult> {
   let resolved = ['click', 'fill'].includes(proposal.action) ? resolveTarget(proposal.target, epoch) : { target: null, element: null, node: null };
   const verdict = validateProposal(proposal, resolved.target);
   if (!verdict.ok) return verdict;
@@ -14,7 +14,7 @@ export async function execute(epoch: number, proposal: Proposal, announcer: { ho
   if (!(resolved.element instanceof HTMLElement) || !resolved.node) return { ok: false, reason: 'role_mismatch' };
   if (verdict.kind === 'fill' && !(resolved.element instanceof HTMLInputElement || resolved.element instanceof HTMLTextAreaElement)) return { ok: false, reason: 'role_mismatch' };
   const name = spokenName(resolved.node);
-  announcer.announce(verdict.kind === 'click' ? clickPre(name) : fillPre(name));
+  await announcer.announce(verdict.kind === 'click' ? clickPre(name) : fillPre(name));
   await new Promise(resolve => setTimeout(resolve, 300));
   // Revalidate all live policy signals across the announcement delay.
   resolved = resolveTarget(proposal.target, epoch);

@@ -1,12 +1,12 @@
-import { SESSION_KEYS } from '../shared/protocol.ts';
-import type { FromOffscreen, SnapshotResult, ExecuteResult, ExecutedAction, EffectResponse } from '../shared/protocol.ts';
+import { SESSION_KEYS, PENDING_EFFECT_MAX_AGE_MS } from '../shared/protocol.ts';
+import type { FromOffscreen, SnapshotResult, ExecuteResult, ExecutedAction, EffectResponse, PendingEffectJob, SettleDiffResult } from '../shared/protocol.ts';
 import type { PageDiff } from '../shared/snapshot-format.ts';
 import { isEmptyDiff } from '../shared/diff.ts';
 import type { Proposal } from '../shared/validate.ts';
 import { onToggle, isStale } from '../shared/turn.ts';
 import type { TurnState } from '../shared/turn.ts';
 import { maskText } from '../shared/mask.ts';
-import { toModelText } from '../shared/snapshot-format.ts';
+import { toModelText, spokenName } from '../shared/snapshot-format.ts';
 import * as msg from '../shared/messages.pl.ts';
 import { postJson, EgressBlockedError } from './proxy.ts';
 let creating: Promise<void> | undefined;
@@ -83,10 +83,11 @@ export async function handleOffscreenMessage(message: FromOffscreen): Promise<vo
       await resetTurn(); break;
     case 'TRANSCRIBE_ERROR': await announce(turn.tabId, msg.STT_FAILED); await resetTurn(); break;
     case 'TRANSCRIPT':
-      try { await runCommand(turn.tabId, message.text); } finally { await resetTurn(); }
+      let outcome: 'handoff' | void = undefined;
+      try { outcome = await runCommand(turn.tabId, message.text); } finally { if (outcome !== 'handoff') await resetTurn(); }
   }
 }
-export async function runCommand(tabId: number | undefined, rawText: string): Promise<void> {
+export async function runCommand(tabId: number | undefined, rawText: string): Promise<'handoff' | void> {
   const text = rawText.trim();
   if (!text) { await announce(tabId, msg.NOTHING_HEARD); return; }
   let result: SnapshotResult;
@@ -100,10 +101,35 @@ export async function runCommand(tabId: number | undefined, rawText: string): Pr
     const utterance = Array.from(maskText(text)).slice(0, 500).join('');
     proposal = await postJson('/api/action', { utterance, snapshot: toModelText(result.snapshot) }, 20000);
   } catch (error) { await announce(tabId, error instanceof EgressBlockedError ? msg.SNAPSHOT_FAILED : msg.ASSISTANT_FAILED); return; }
+  if (proposal.action === 'click' || proposal.action === 'fill') {
+    const node = result.snapshot.nodes.find(n => n.id === proposal.target);
+    const job: PendingEffectJob = { id: crypto.randomUUID(), tabId: tabId!, action: { kind: proposal.action, name: node ? spokenName(node) : '', role: node?.role ?? '' }, preSnapshot: result.snapshot, startedAt: Date.now() };
+    await chrome.storage.session.set({ [SESSION_KEYS.pendingEffect]: job });
+  }
   let executed: ExecuteResult;
   try { executed = await chrome.tabs.sendMessage(tabId!, { type: 'EXECUTE', epoch: result.snapshot.epoch, proposal }, { frameId: 0 }); }
-  catch { return; }
+  catch { return 'handoff'; }
+  await chrome.storage.session.remove(SESSION_KEYS.pendingEffect);
   if (!executed.ok) await announce(tabId, msg.rejectionText(executed.reason));
   else if (executed.kind === 'none') await announce(tabId, msg.noneSay(proposal.say));
   else await announceEffect(tabId!, { kind: executed.kind, name: executed.name, role: executed.role }, executed.diff ?? { added: [], removed: [], changed: [], alerts: [] });
+}
+// Serialize READY consumers so duplicate document notifications cannot claim one job twice.
+let readyQueue: Promise<void> = Promise.resolve();
+export async function handleReady(tabId: number): Promise<void> {
+  const work = readyQueue.then(async () => {
+    const job = (await chrome.storage.session.get(SESSION_KEYS.pendingEffect))[SESSION_KEYS.pendingEffect] as PendingEffectJob | undefined;
+    if (!job || job.tabId !== tabId) return;
+    await chrome.storage.session.remove(SESSION_KEYS.pendingEffect);
+    const resetOwnedTurn = async () => { if ((await getTurn()).tabId === tabId) await resetTurn(); };
+    if (Date.now() - job.startedAt > PENDING_EFFECT_MAX_AGE_MS) { await resetOwnedTurn(); return; }
+    try {
+      const result: SettleDiffResult = await chrome.tabs.sendMessage(tabId, { type: 'SETTLE_DIFF', preSnapshot: job.preSnapshot }, { frameId: 0 });
+      if (!result.ok) throw new Error('snapshot_failed');
+      await announceEffect(tabId, job.action, result.diff);
+    } catch { await announce(tabId, msg.effectFallback(job.action.kind, job.action.name)); }
+    finally { await resetOwnedTurn(); }
+  });
+  readyQueue = work.catch(() => {});
+  await work;
 }

@@ -1,6 +1,11 @@
 import { SESSION_KEYS, PENDING_EFFECT_MAX_AGE_MS } from '../shared/protocol.ts';
-import type { FromOffscreen, SnapshotResult, ExecuteResult, ExecutedAction, EffectResponse, PendingEffectJob, SettleDiffResult } from '../shared/protocol.ts';
-import type { PageDiff } from '../shared/snapshot-format.ts';
+import type { FromOffscreen, SnapshotResult, ExecuteResult, ExecutedAction, EffectResponse, PendingEffectJob, SettleDiffResult, ReadStatusResult } from '../shared/protocol.ts';
+import type { PageDiff, Snapshot } from '../shared/snapshot-format.ts';
+import { parseIntent } from '../shared/intent.ts';
+import { wordsToDigits, digitsToSpokenGroups } from '../shared/polish-speech.ts';
+import { isParcelDigits, pickParcelField, pickSearchButton } from '../shared/parcel.ts';
+import { routeReply } from '../shared/pending.ts';
+import type { PendingInteraction } from '../shared/pending.ts';
 import { isEmptyDiff } from '../shared/diff.ts';
 import type { Proposal } from '../shared/validate.ts';
 import { onToggle, isStale } from '../shared/turn.ts';
@@ -122,11 +127,79 @@ const JOB = SESSION_KEYS.pendingEffect;
 async function getJob(): Promise<PendingEffectJob | undefined> { return (await chrome.storage.session.get(JOB))[JOB] as PendingEffectJob | undefined; }
 async function dropJob(id: string): Promise<void> { if ((await getJob())?.id === id) await chrome.storage.session.remove(JOB); }
 async function ownsTurn(turnId: string): Promise<boolean> { return !turnSignal(turnId).aborted && (await getTurn()).id === turnId; }
+export async function getPending(): Promise<PendingInteraction | undefined> { return (await chrome.storage.session.get(SESSION_KEYS.pending))[SESSION_KEYS.pending] as PendingInteraction | undefined; }
+export function setPending(turnId: string, pending: PendingInteraction): Promise<void> { return runSerial(async () => { if (await ownsTurn(turnId)) await chrome.storage.session.set({ [SESSION_KEYS.pending]: pending }); }); }
+export function claimPending(): Promise<PendingInteraction | undefined> { return runSerial(async () => { const p = await getPending(); await chrome.storage.session.remove(SESSION_KEYS.pending); return p; }); }
+type CommandRun = { turnId: string; tabId: number; signal: AbortSignal };
+type ProposalStep = { proposal: Proposal; epoch: number; docId: string; preSnapshot: Snapshot; announce: 'model' | 'none' };
+export async function performProposal(run: CommandRun, step: ProposalStep): Promise<'done' | 'handoff' | 'stopped'> {
+  const { turnId, tabId, signal } = run, { proposal } = step;
+  const say = async (text: string) => { if (await ownsTurn(turnId)) await announce(tabId, text); };
+  if (!(await ownsTurn(turnId))) return 'stopped';
+  let jobId = '';
+  if (proposal.action === 'click' || proposal.action === 'fill') {
+    const node = step.preSnapshot.nodes.find(n => n.id === proposal.target);
+    const job: PendingEffectJob = { id: crypto.randomUUID(), turnId, tabId, state: 'proposed', action: { kind: proposal.action, name: node ? spokenName(node) : '', role: node?.role ?? '' }, preSnapshot: step.preSnapshot, startedAt: Date.now() };
+    jobId = job.id;
+    await runSerial(async () => { if (await ownsTurn(turnId)) await chrome.storage.session.set({ [JOB]: job }); });
+  }
+  if (!(await ownsTurn(turnId))) return 'stopped';
+  let executed: ExecuteResult;
+  try { executed = await chrome.tabs.sendMessage(tabId, { type: 'EXECUTE', epoch: step.epoch, proposal, turnId, jobId, docId: step.docId }, { frameId: 0 }); }
+  catch {
+    const job = await getJob();
+    if (jobId && job?.id === jobId && job.state !== 'proposed') return 'handoff';
+    if (jobId) await runSerial(() => dropJob(jobId));
+    await say(msg.ACTION_FAILED); return 'stopped';
+  }
+  if (jobId) await runSerial(() => dropJob(jobId));
+  if (!(await ownsTurn(turnId))) return 'stopped';
+  if (!executed.ok) { await say(msg.rejectionText(executed.reason)); return 'stopped'; }
+  if (executed.kind === 'none') { await say(msg.noneSay(proposal.say)); return 'stopped'; }
+  if (step.announce === 'model') await announceEffect(tabId, { kind: executed.kind, name: executed.name, role: executed.role }, executed.diff ?? { added: [], removed: [], changed: [], alerts: [] }, signal);
+  return 'done';
+}
+export async function runParcelSearch(run: CommandRun, digits: string): Promise<'handoff' | void> {
+  const say = async (text: string) => { if (await ownsTurn(run.turnId)) await announce(run.tabId, text); };
+  try {
+    let result: SnapshotResult = await chrome.tabs.sendMessage(run.tabId, { type: 'SNAPSHOT' }, { frameId: 0 });
+    if (!result.ok) { await say(msg.SNAPSHOT_FAILED); return; }
+    const field = pickParcelField(result.snapshot), button = pickSearchButton(result.snapshot);
+    if (!field?.id || !button?.id) { await say(msg.PARCEL_FORM_MISSING); return; }
+    const fill = await performProposal(run, { proposal: { action: 'fill', target: field.id, text: digits, needs_confirmation: false, say: '' }, epoch: result.snapshot.epoch, docId: result.docId, preSnapshot: result.snapshot, announce: 'none' });
+    if (fill !== 'done') return fill === 'handoff' ? 'handoff' : undefined;
+    result = await chrome.tabs.sendMessage(run.tabId, { type: 'SNAPSHOT' }, { frameId: 0 });
+    if (!result.ok) { await say(msg.SNAPSHOT_FAILED); return; }
+    const search = pickSearchButton(result.snapshot);
+    if (!search?.id) { await say(msg.PARCEL_FORM_MISSING); return; }
+    const click = await performProposal(run, { proposal: { action: 'click', target: search.id, text: '', needs_confirmation: false, say: '' }, epoch: result.snapshot.epoch, docId: result.docId, preSnapshot: result.snapshot, announce: 'none' });
+    if (click !== 'done') return click === 'handoff' ? 'handoff' : undefined;
+    const status: ReadStatusResult = await chrome.tabs.sendMessage(run.tabId, { type: 'READ_STATUS', number: digits }, { frameId: 0 });
+    await say(status.ok ? msg.statusSpeech(status.status) : msg.STATUS_UNREAD);
+  } catch { await say(msg.STATUS_UNREAD); }
+}
 export async function runCommand(turnId: string, tabId: number | undefined, rawText: string): Promise<'handoff' | void> {
   const signal = turnSignal(turnId);
   const say = async (text: string) => { if (await ownsTurn(turnId)) await announce(tabId, text); };
   const text = rawText.trim();
   if (!text) { await say(msg.NOTHING_HEARD); return; }
+  const pending = await claimPending();
+  if (pending && pending.tabId === tabId) {
+    const reply = routeReply(pending, text, Date.now());
+    if (reply.kind === 'confirm' && pending.kind === 'confirm_parcel') return runParcelSearch({ turnId, tabId: tabId!, signal }, pending.digits);
+    if (reply.kind === 'cancel') { await say(msg.CANCELLED); return; }
+    if (reply.kind === 'reprompt') { await setPending(turnId, { ...pending, reprompts: pending.reprompts + 1 }); await say(msg.CONFIRM_REPROMPT); return; }
+  }
+  const intent = parseIntent(text);
+  if (intent.kind === 'track_parcel') {
+    const number = wordsToDigits(intent.rest);
+    if (number.ok && isParcelDigits(number.digits) && tabId !== undefined) {
+      await setPending(turnId, { kind: 'confirm_parcel', digits: number.digits, id: crypto.randomUUID(), tabId, createdAt: Date.now(), reprompts: 0 });
+      await say(msg.parcelReadback(digitsToSpokenGroups(number.digits)));
+    } else await say(msg.NOTHING_HEARD);
+    return;
+  }
+  if (intent.kind === 'yes' || intent.kind === 'no') { await say(msg.NOTHING_TO_CONFIRM); return; }
   let result: SnapshotResult;
   try {
     if (tabId === undefined) throw new Error('no_tab');
@@ -140,29 +213,8 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
     proposal = await postJson('/api/action', { utterance, snapshot: toModelText(result.snapshot) }, 20000, signal);
   } catch (error) { await say(error instanceof EgressBlockedError ? msg.SNAPSHOT_FAILED : msg.ASSISTANT_FAILED); return; }
   if (!(await ownsTurn(turnId))) return;
-  // The job is only a proposal until the page confirms (EXECUTING) that it is about to perform the side effect.
-  let jobId = '';
-  if (proposal.action === 'click' || proposal.action === 'fill') {
-    const node = result.snapshot.nodes.find(n => n.id === proposal.target);
-    const job: PendingEffectJob = { id: crypto.randomUUID(), turnId, tabId: tabId!, state: 'proposed', action: { kind: proposal.action, name: node ? spokenName(node) : '', role: node?.role ?? '' }, preSnapshot: result.snapshot, startedAt: Date.now() };
-    jobId = job.id;
-    await chrome.storage.session.set({ [JOB]: job });
-  }
-  let executed: ExecuteResult;
-  try { executed = await chrome.tabs.sendMessage(tabId!, { type: 'EXECUTE', epoch: result.snapshot.epoch, proposal, turnId, jobId, docId: result.docId }, { frameId: 0 }); }
-  catch {
-    // Only an action the page proved it started can be followed by a navigation; any other delivery failure ends the turn locally.
-    const job = await getJob();
-    if (jobId && job?.id === jobId && job.state !== 'proposed') return 'handoff';
-    if (jobId) await dropJob(jobId);
-    await say(msg.ACTION_FAILED);
-    return;
-  }
-  if (jobId) await dropJob(jobId);
-  if (!(await ownsTurn(turnId))) return;
-  if (!executed.ok) await say(msg.rejectionText(executed.reason));
-  else if (executed.kind === 'none') await say(msg.noneSay(proposal.say));
-  else await announceEffect(tabId!, { kind: executed.kind, name: executed.name, role: executed.role }, executed.diff ?? { added: [], removed: [], changed: [], alerts: [] }, signal);
+  const outcome = await performProposal({ turnId, tabId: tabId!, signal }, { proposal, epoch: result.snapshot.epoch, docId: result.docId, preSnapshot: result.snapshot, announce: 'model' });
+  return outcome === 'handoff' ? 'handoff' : undefined;
 }
 // The content script calls this right before it performs a click/fill; only after the acknowledgement does it act.
 export function handleExecuting(tabId: number | undefined, message: { turnId: string; jobId: string }): Promise<boolean> {
@@ -187,6 +239,7 @@ export function expireJob(jobId: string): Promise<void> {
 }
 export function handleTabRemoved(tabId: number): Promise<void> {
   return runSerial(async () => {
+    if ((await getPending())?.tabId === tabId) await chrome.storage.session.remove(SESSION_KEYS.pending);
     const [turn, job] = [await getTurn(), await getJob()];
     if (job?.tabId === tabId) await chrome.storage.session.remove(JOB);
     if (turn.phase !== 'idle' && turn.tabId === tabId) { abortTurn(turn.id); await resetTurnIf(turn.id); }

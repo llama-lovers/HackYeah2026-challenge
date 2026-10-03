@@ -30,7 +30,7 @@ try {
   const start = Date.now();
   await page.evaluate(`(() => { const el=document.querySelector('#ShipmentNumber'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,'873234987612340872938732'); el.dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('.tracking-form button').click(); })()`);
   await waitFor(() => page.evaluate(`!!document.querySelector('div.loader')`), { timeoutMs: 300, intervalMs: 20, label: 'loader within 300 ms' });
-  await waitFor(() => page.evaluate(`document.body.textContent.includes('Status: W drodze do paczkomatu')`), { timeoutMs: 3000, label: 'tracking result' });
+  await waitFor(() => page.evaluate(`document.body.textContent.includes('W drodze do paczkomatu')`), { timeoutMs: 3000, label: 'tracking result' });
   assert.ok(Date.now() - start < 3000);
   assert.equal(await page.evaluate('location.search'), '?number=873234987612340872938732');
   assert.equal(await page.evaluate(`document.querySelector('.btnSearchMobile').checkVisibility()`), false);

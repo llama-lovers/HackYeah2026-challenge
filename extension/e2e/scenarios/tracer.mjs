@@ -8,7 +8,7 @@ export async function run(ctx) {
   const mark = await ctx.upstreamMark();
   await ctx.speak(page, 'kliknij Znajdź');
   await ctx.waitForLive(page, 'Klikam Znajdź.');
-  await waitFor(() => page.evaluate(`document.querySelector('.parcel-wrapper').textContent.includes('Status: W drodze do paczkomatu')`), { timeoutMs: 5000, label: 'real click result' });
+  await waitFor(() => page.evaluate(`document.querySelector('.parcel-wrapper .status h2')?.textContent === 'W drodze do paczkomatu'`), { timeoutMs: 5000, label: 'real click result' });
   await ctx.waitForLive(page, log => log.some(s => s.startsWith('Zmiana na stronie')));
   const log = await ctx.liveLog(page);
   assert(log.indexOf('Słucham.') < log.indexOf('Przetwarzam.') && log.indexOf('Przetwarzam.') < log.indexOf('Klikam Znajdź.'));

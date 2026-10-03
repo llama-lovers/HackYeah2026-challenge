@@ -26,7 +26,7 @@ export async function run(ctx) {
   await ctx.waitIdle();
   requests = await ctx.upstreamSince(mark);
   effect = requests.find(r => r.response_format.json_schema.name === 'effect_summary');
-  assert.match(userContent(effect), /Status: W drodze do paczkomatu/);
+  assert.match(userContent(effect), /W drodze do paczkomatu/);
   offset = (await ctx.liveLog(page)).length;
   mark = await ctx.upstreamMark();
   await ctx.speak(page, 'kliknij Pokaż mapę');

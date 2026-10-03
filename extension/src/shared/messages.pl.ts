@@ -1,5 +1,13 @@
 import type { RejectReason } from './validate.ts';
 import { truncate } from './snapshot-format.ts';
+import type { ParcelStatus } from './protocol.ts';
+export const CANCELLED = 'Anulowałem.';
+export const CONFIRM_REPROMPT = 'Powiedz tak albo nie.';
+export const NOTHING_TO_CONFIRM = 'Nie ma nic do potwierdzenia.';
+export const STATUS_UNREAD = 'Nie udało się odczytać statusu przesyłki ze strony. Spróbuj jeszcze raz.';
+export const PARCEL_FORM_MISSING = 'Na tej stronie nie ma pola numeru przesyłki. Otwórz stronę śledzenia przesyłek InPost.';
+export function parcelReadback(groups: string): string { return `Numer przesyłki: ${groups}. Potwierdzasz? Powiedz tak albo nie.`; }
+export function statusSpeech(s: ParcelStatus): string { return s.kind === 'error' ? 'Strona informuje: ' + s.description : 'Status na stronie: ' + s.title + (/[.!?…]$/u.test(s.title) ? '' : '.') + (s.description ? ' ' + s.description : ''); }
 export const LISTENING = 'Słucham.';
 export const PROCESSING = 'Przetwarzam.';
 export const BUSY = 'Jeszcze pracuję.';

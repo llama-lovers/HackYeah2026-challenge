@@ -86,6 +86,9 @@ Plans:
   4. When a command takes longer than about 8 seconds the user hears "To trwa dłużej niż zwykle", and a transcription, network or model failure, or an element that cannot be found, is spoken plainly in Polish with a suggested next step (never silence).
 
 **Plans**: TBD
+- [x] 03-01-PLAN.md
+- [ ] 03-02-PLAN.md
+- [ ] 03-03-PLAN.md
 
 ### Phase 4: Audio Control & Accessible Settings
 
@@ -113,5 +116,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 (Phase 3 may start alongsid
 |-------|----------------|--------|-----------|
 | 1. Voice-to-Effect Vertical Slice | 4/4 | In Progress|  |
 | 2. Safe InPost Parcel Tracking | 3/3 | In Progress|  |
-| 3. Page Exploration & Conversation | 0/TBD | Not started | - |
+| 3. Page Exploration & Conversation | 1/3 | In Progress|  |
 | 4. Audio Control & Accessible Settings | 0/TBD | Not started | - |

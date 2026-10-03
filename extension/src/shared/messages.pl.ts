@@ -52,7 +52,7 @@ export const ACTION_FAILED = 'Nie udało się wykonać tej akcji. Spróbuj jeszc
 export const EFFECT_UNKNOWN = 'Wykonałem polecenie, ale nie mogę potwierdzić, co się zmieniło na stronie.';
 export const NEEDS_CONFIRMATION = 'Tej akcji nie wykonam bez potwierdzenia. Powiedz polecenie jeszcze raz.';
 export function confirmPrompt(kind: 'click' | 'fill', name: string, category: ConfirmCategory, context?: string): string {
-  return (kind === 'click' ? `Chcę kliknąć „${name}”` : `Chcę wpisać tekst w pole „${name}”`) + (context ? ', ' + context : '') + '. Potwierdzasz? Powiedz tak albo nie.';
+  return (kind === 'click' ? `Chcę kliknąć „${name}”` : `Chcę wpisać tekst w pole „${name}”`) + (category === 'consent' ? ' w oknie zgody na pliki cookie' : '') + (context ? ', ' + context : '') + '. Potwierdzasz? Powiedz tak albo nie.';
 }
 export function clickPre(name: string): string { return `Klikam ${name}.`; }
 export function fillPre(name: string): string { return `Wpisuję w pole ${name}.`; }
@@ -74,11 +74,12 @@ const REJECTIONS: Record<RejectReason, string> = {
 };
 export function rejectionText(reason: RejectReason): string { return REJECTIONS[reason]; }
 export function noneSay(say: string): string { return truncate(speakable(say), 300) || NONE_FALLBACK; }
-export function localEffect(action: ExecutedAction, diff: PageDiff): string {
+export function localEffect(action: ExecutedAction, diff: PageDiff, category?: ConfirmCategory): string {
   if (isEmptyDiff(diff)) return noChange(action.kind, action.name);
   const prefix = action.kind === 'click' ? `Kliknąłem ${action.name}.` : `Wpisałem tekst w pole ${action.name}.`;
   if (diff.path || diff.title) return prefix + ' Jesteś teraz na stronie ' + (diff.title?.after || diff.path?.after) + '.';
   if (diff.alerts.length) return prefix + ' Strona informuje: ' + diff.alerts[0];
+  if (category === 'consent' && diff.removed.length) return prefix + ' Okno zgód zostało zamknięte.';
   const text = diff.added.find(s => !/^(?:button|link|textbox|searchbox|combobox|checkbox|radio|menuitem|tab|switch)(?:\s|$)/u.test(s));
   if (text) return prefix + ' Na stronie pojawiło się: ' + text + (/[.!?…]$/u.test(text) ? '' : '.');
   return prefix + ' Strona się zmieniła.';

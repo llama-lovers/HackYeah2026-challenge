@@ -165,6 +165,15 @@ try {
   const renamedDuringDelay = await page.evaluate(`(async () => { document.body.innerHTML='<button type="button">Pokaż mapę</button><div id="host"></div>'; window.__clicked=false; document.querySelector('button').addEventListener('click', () => { window.__clicked=true; }); const s=__snapTest.takeSnapshot(), id=s.nodes.find(n=>n.role==='button').id; const result=await __snapTest.execute(s.epoch,{action:'click',target:id,text:'',needs_confirmation:false,say:''},{host:document.querySelector('#host'),announce(){ document.querySelector('button').textContent='Pokaż pomoc'; }}); return {result,clicked:window.__clicked}; })()`);
   assert.deepEqual(renamedDuringDelay, { result: { ok: false, reason: 'stale' }, clicked: false });
   console.log('PASS dom-check: semantic drift is refused before the action');
+  await page.goto(server.origin + '/fixtures/consent-banner.html'); await page.evaluate(bundle);
+  const consent = await page.evaluate(`(() => { const s=__snapTest.takeSnapshot();return s.nodes.filter(n=>n.kind==='interactive'&&['button','link'].includes(n.role)).map(n=>{const target=__snapTest.resolveTarget(n.id,s.epoch).target, p={action:'click',target:n.id,text:'',needs_confirmation:false,say:''};return {name:n.name,consent:target.consent,unconfirmed:__snapTest.validateProposal(p,target),confirmed:__snapTest.validateProposal(p,target,{confirmed:true})};}); })()`);
+  for (const name of ['ZAAKCEPTUJ WSZYSTKO', 'ODRZUĆ WSZYSTKO', 'DOSTOSUJ', 'Polityce cookies', 'Zamknij', 'Znajdź']) {
+    const entry = consent.find(n => n.name === name); assert(entry, name);
+    assert.equal(entry.consent, name !== 'Znajdź', name);
+    assert.deepEqual(entry.unconfirmed, name === 'Znajdź' ? { ok: true, kind: 'click' } : { ok: false, reason: 'irreversible' }, name);
+    assert.deepEqual(entry.confirmed, { ok: true, kind: 'click' }, name);
+  }
+  console.log('PASS dom-check: consent containers protect all controls and preserve parcel lookup');
 } catch (error) {
   console.error(`FAIL dom-check: ${error.stack}\n${lastText}`); process.exitCode = 1;
 } finally {

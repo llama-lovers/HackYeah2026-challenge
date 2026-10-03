@@ -12,7 +12,7 @@ export async function execute(epoch: number, proposal: Proposal, announcer: { ho
   if (!verdict.ok) {
     if (isConfirmable(verdict.reason) && opts.confirmed !== true && resolved.node && resolved.target) {
       if (resolved.target.drifted) return { ok: false, reason: 'stale' };
-      return { ...verdict, confirm: { name: spokenName(resolved.node), role: resolved.node.role, category: verdict.reason === 'needs_confirmation' ? 'model_flag' : 'irreversible' } };
+      return { ...verdict, confirm: { name: spokenName(resolved.node), role: resolved.node.role, category: resolved.target.consent ? 'consent' : verdict.reason === 'needs_confirmation' ? 'model_flag' : 'irreversible' } };
     }
     return verdict;
   }

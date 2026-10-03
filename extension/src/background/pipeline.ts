@@ -9,7 +9,7 @@ import { isParcelDigits, pickParcelField, pickSearchButton } from '../shared/par
 import { routeReply } from '../shared/pending.ts';
 import type { PendingInteraction } from '../shared/pending.ts';
 import { isEmptyDiff } from '../shared/diff.ts';
-import type { Proposal } from '../shared/validate.ts';
+import type { Proposal, ConfirmCategory } from '../shared/validate.ts';
 import { onToggle, isStale } from '../shared/turn.ts';
 import type { TurnState } from '../shared/turn.ts';
 import { maskText } from '../shared/mask.ts';
@@ -133,7 +133,7 @@ export async function getPending(): Promise<PendingInteraction | undefined> { re
 export function setPending(turnId: string, pending: PendingInteraction): Promise<void> { return runSerial(async () => { if (await ownsTurn(turnId)) await chrome.storage.session.set({ [SESSION_KEYS.pending]: pending }); }); }
 export function claimPending(): Promise<PendingInteraction | undefined> { return runSerial(async () => { const p = await getPending(); await chrome.storage.session.remove(SESSION_KEYS.pending); return p; }); }
 export type CommandRun = { turnId: string; tabId: number; signal: AbortSignal; budget: StepBudget };
-type ProposalStep = { proposal: Proposal; epoch: number; docId: string; preSnapshot: Snapshot; announce: 'model' | 'none' | 'local'; confirmed?: boolean; context?: string };
+type ProposalStep = { proposal: Proposal; epoch: number; docId: string; preSnapshot: Snapshot; announce: 'model' | 'none' | 'local'; confirmed?: boolean; context?: string; category?: ConfirmCategory };
 export async function performProposal(run: CommandRun, step: ProposalStep): Promise<'done' | 'handoff' | 'stopped'> {
   const { turnId, tabId, signal } = run, { proposal } = step;
   const say = async (text: string) => { if (await ownsTurn(turnId)) await announce(tabId, text); };
@@ -167,7 +167,7 @@ export async function performProposal(run: CommandRun, step: ProposalStep): Prom
   }
   if (executed.kind === 'none') { await say(msg.noneSay(proposal.say)); return 'stopped'; }
   if (step.announce === 'model') await announceEffect(tabId, { kind: executed.kind, name: executed.name, role: executed.role }, executed.diff ?? { added: [], removed: [], changed: [], alerts: [] }, signal);
-  else if (step.announce === 'local') await say(msg.localEffect({ kind: executed.kind, name: executed.name, role: executed.role }, executed.diff ?? { added: [], removed: [], changed: [], alerts: [] }));
+  else if (step.announce === 'local') await say(msg.localEffect({ kind: executed.kind, name: executed.name, role: executed.role }, executed.diff ?? { added: [], removed: [], changed: [], alerts: [] }, step.category));
   return 'done';
 }
 export async function runParcelSearch(run: CommandRun, digits: string): Promise<'handoff' | void> {
@@ -211,7 +211,7 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
     const reply = routeReply(pending, text, Date.now());
     if (reply.kind === 'confirm' && pending.kind === 'confirm_parcel') return runParcelSearch(run, pending.digits);
     if (reply.kind === 'confirm' && pending.kind === 'confirm_action') {
-      const outcome = await performProposal(run, { proposal: pending.proposal, epoch: pending.epoch, docId: pending.docId, preSnapshot: pending.preSnapshot, announce: 'local', confirmed: true });
+      const outcome = await performProposal(run, { proposal: pending.proposal, epoch: pending.epoch, docId: pending.docId, preSnapshot: pending.preSnapshot, announce: 'local', confirmed: true, category: pending.category });
       return outcome === 'handoff' ? 'handoff' : undefined;
     }
     if (reply.kind === 'cancel') { await say(msg.CANCELLED); return; }

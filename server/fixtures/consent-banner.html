@@ -1,0 +1,18 @@
+<!doctype html><html lang="pl"><head><meta charset="utf-8"><title>Zgody (fixture)</title>
+<style>body{font:18px sans-serif;margin:24px}input,button{font:inherit;margin:8px;padding:8px}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}</style></head><body>
+<main><h1>Śledź paczkę</h1><form class="tracking-form" method="get" action="/fixtures/tracking-form.html">
+<label class="sr-only" for="ShipmentNumber">Enter parcel numbers separated by commas</label>
+<input id="ShipmentNumber" name="number" type="text" minlength="8" maxlength="24" pattern="\d{8}|\d{24}" autocomplete="off" placeholder="Wpisz numer przesyłki"><button type="submit">Znajdź</button></form></main>
+<div id="didomi-host"><div class="didomi-popup-container" role="dialog" aria-modal="true" aria-label="Witamy na undefined Zarządzanie zgodami">
+<p>Korzystamy z plików cookie. Dowiedz się więcej w <a href="/fixtures/szukaj.html">Polityce cookies</a>.</p>
+<button type="button" id="didomi-notice-disagree-button">ODRZUĆ WSZYSTKO</button>
+<button type="button" id="didomi-notice-learn-more-button">DOSTOSUJ</button>
+<button type="button" id="didomi-notice-agree-button">ZAAKCEPTUJ WSZYSTKO</button></div></div>
+<div role="dialog" aria-label="Ustawienia plików cookie"><button type="button" id="cookie-close">Zamknij</button></div>
+<script>
+const closeConsent = choice => { window.__consent=choice; document.querySelector('.didomi-popup-container').remove(); document.querySelector('#didomi-host').setAttribute('aria-hidden','true'); };
+document.querySelector('#didomi-notice-agree-button').addEventListener('click', () => closeConsent('all'));
+document.querySelector('#didomi-notice-disagree-button').addEventListener('click', () => closeConsent('none'));
+document.querySelector('#didomi-notice-learn-more-button').addEventListener('click', () => { window.__consentPanel=true; });
+document.querySelector('#cookie-close').addEventListener('click', e => { window.__cookieClosed=true; e.target.closest('[role=dialog]').remove(); });
+</script></body></html>

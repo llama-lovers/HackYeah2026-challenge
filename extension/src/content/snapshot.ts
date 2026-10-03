@@ -258,6 +258,17 @@ function sideEffectSignals(el: Element): boolean {
 }
 // Any failure while collecting signals is itself ambiguous, so it counts as a signal.
 function safeSideEffectSignals(el: Element): boolean { try { return sideEffectSignals(el); } catch { return true; } }
+const CONSENT_CONTAINER_SELECTOR = '#didomi-host, [id^="didomi-"], [class*="didomi-"], #onetrust-banner-sdk, #onetrust-consent-sdk, #CybotCookiebotDialog';
+function consentSignal(el: Element): boolean {
+  try {
+    if (closestOf(el, CONSENT_CONTAINER_SELECTOR)) return true;
+    for (let dialog = closestOf(el, '[role="dialog"], [role="alertdialog"], dialog'); dialog; dialog = parentOf(dialog) ? closestOf(parentOf(dialog)!, '[role="dialog"], [role="alertdialog"], dialog') : null) {
+      const text = [getAttr(dialog, 'aria-label'), computeName(dialog), labelText(dialog).slice(0, 300)].join(' ').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').replace(/ł/g, 'l');
+      if (/cookie|ciasteczk|zgod|prywatnosc|privacy|consent/.test(text)) return true;
+    }
+    return false;
+  } catch { return true; }
+}
 function safeDecode(text: string): string { try { return decodeURIComponent(text); } catch { return text; } }
 // Semantic identity of a snapshot target: what the model's proposal was about. Any change (role, name, purpose, destination, form
 // association) means the id now denotes a different control, which must be re-proposed rather than silently reinterpreted.
@@ -277,6 +288,6 @@ export function resolveTarget(id: string, requestedEpoch: number): { target: Res
   const maxLength = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.maxLength : -1;
   return { element, node, target: { exists: true, epochMatches: requestedEpoch === epoch, connected: connectedOf(element),
     visible: isElementVisible(element), disabled: isElementDisabled(element), role, sensitive: !!(entry.node.state?.sensitive || liveState.sensitive), name,
-    maxLength: maxLength >= 0 ? maxLength : null, submitsNonLookupForm: submitsNonLookupForm(element), drifted: safeDrifted(element, entry.identity), sideEffectSignals: safeSideEffectSignals(element), knownSafe: safeKnownSafeClick(element) } };
+    maxLength: maxLength >= 0 ? maxLength : null, submitsNonLookupForm: submitsNonLookupForm(element), drifted: safeDrifted(element, entry.identity), sideEffectSignals: safeSideEffectSignals(element), knownSafe: safeKnownSafeClick(element), consent: consentSignal(element) } };
 }
 export function getLastSnapshot(): Snapshot | null { return last; }

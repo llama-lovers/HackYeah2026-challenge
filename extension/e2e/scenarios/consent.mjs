@@ -1,0 +1,34 @@
+import assert from 'node:assert/strict';
+import { waitFor } from '../cdp.mjs';
+export const name = 'consent';
+export const timeoutMs = 60000;
+const prompt = label => `Chcę kliknąć „${label}” w oknie zgody na pliki cookie. Potwierdzasz? Powiedz tak albo nie.`;
+const noPending = async ctx => assert.equal(await ctx.swEval("chrome.storage.session.get(['pending','pendingEffect']).then(s => Object.keys(s).length)"), 0);
+export async function run(ctx) {
+  let page = await ctx.openPage('/fixtures/consent-banner.html');
+  let mark = await ctx.upstreamMark();
+  await ctx.speak(page, 'kliknij Zaakceptuj wszystko');
+  await ctx.waitForLive(page, prompt('ZAAKCEPTUJ WSZYSTKO')); await ctx.waitIdle();
+  assert.equal(await page.evaluate('window.__consent'), undefined);
+  await ctx.speak(page, 'tak');
+  await ctx.waitForLive(page, 'Klikam ZAAKCEPTUJ WSZYSTKO.');
+  await ctx.waitForLive(page, 'Kliknąłem ZAAKCEPTUJ WSZYSTKO. Okno zgód zostało zamknięte.'); await ctx.waitIdle();
+  assert.equal(await page.evaluate('window.__consent'), 'all');
+  const requests = await ctx.upstreamSince(mark);
+  assert.equal(requests.length, 1); assert.equal(requests[0].response_format.json_schema.name, 'action_proposal');
+  await noPending(ctx);
+  page = await ctx.openPage('/fixtures/consent-banner.html');
+  await ctx.speak(page, 'kliknij Odrzuć wszystko');
+  await ctx.waitForLive(page, prompt('ODRZUĆ WSZYSTKO')); await ctx.waitIdle();
+  await ctx.speak(page, 'nie');
+  await ctx.waitForLive(page, 'Anulowałem.'); await ctx.waitIdle();
+  assert.equal(await page.evaluate('window.__consent'), undefined); await noPending(ctx);
+  page = await ctx.openPage('/fixtures/consent-banner.html'); mark = await ctx.upstreamMark();
+  await ctx.speak(page, 'kliknij Polityce cookies');
+  await ctx.waitForLive(page, prompt('Polityce cookies')); await ctx.waitIdle();
+  await ctx.speak(page, 'tak');
+  await waitFor(() => page.evaluate("location.pathname === '/fixtures/szukaj.html'"), { label: 'policy navigation' });
+  await ctx.waitForLive(page, log => log.some(s => s.startsWith('Kliknąłem Polityce cookies. Jesteś teraz na stronie')));
+  await ctx.waitIdle();
+  assert.equal((await ctx.upstreamSince(mark)).length, 1); await noPending(ctx);
+}

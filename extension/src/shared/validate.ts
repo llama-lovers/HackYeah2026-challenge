@@ -1,5 +1,5 @@
 export interface Proposal { action: string; target: string; text: string; needs_confirmation: boolean; say: string }
-export interface ResolvedTarget { exists: boolean; epochMatches: boolean; connected: boolean; visible: boolean; disabled: boolean; role: string; sensitive: boolean; name: string; maxLength: number | null; submitsNonLookupForm: boolean; sideEffectSignals: boolean; knownSafe: boolean; drifted: boolean }
+export interface ResolvedTarget { exists: boolean; epochMatches: boolean; connected: boolean; visible: boolean; disabled: boolean; role: string; sensitive: boolean; name: string; maxLength: number | null; submitsNonLookupForm: boolean; sideEffectSignals: boolean; knownSafe: boolean; drifted: boolean; consent: boolean }
 export type RejectReason = 'unknown_action' | 'not_found' | 'stale' | 'hidden' | 'disabled' | 'role_mismatch' | 'sensitive_fill' | 'empty_text' | 'too_long' | 'needs_confirmation' | 'irreversible' | 'unconfirmed';
 export type Verdict = { ok: true; kind: 'click' | 'fill' | 'none' } | { ok: false; reason: RejectReason };
 export type ConfirmCategory = 'irreversible' | 'model_flag' | 'consent';
@@ -29,7 +29,7 @@ export function validateProposal(p: Proposal, t: ResolvedTarget | null, opts: { 
     if (t.maxLength !== null && p.text.length > t.maxLength) return reject('too_long');
   }
   if (opts.confirmed !== true && p.needs_confirmation) return reject('needs_confirmation');
-  if (opts.confirmed !== true && p.action === 'click' && (IRREVERSIBLE_NAME_RE.test(t.name) || SIDE_EFFECT_RE.test(t.name) || t.submitsNonLookupForm || t.sideEffectSignals || !t.knownSafe)) return reject('irreversible');
+  if (opts.confirmed !== true && p.action === 'click' && (IRREVERSIBLE_NAME_RE.test(t.name) || SIDE_EFFECT_RE.test(t.name) || t.submitsNonLookupForm || t.sideEffectSignals || t.consent || !t.knownSafe)) return reject('irreversible');
   // Checked last so a repurposed control is still refused for its own, more specific reason first.
   if (t.drifted) return reject('stale');
   return { ok: true, kind: p.action as 'click' | 'fill' };

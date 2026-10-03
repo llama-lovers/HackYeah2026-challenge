@@ -28,3 +28,13 @@ test('action confirmation never restarts for a new parcel command', () => {
   assert.deepEqual(s.routeReply(p, 'nie', 1100), { kind: 'cancel' });
   assert.deepEqual(s.routeReply(p, 'sprawdź status przesyłki 12345678', 1100), { kind: 'reprompt' });
 });
+test('action replies use whole utterance matching and preserve the TTL boundary', () => {
+  const p = { ...pending, kind: 'confirm_action' };
+  assert.deepEqual(s.routeReply(p, 'anuluj', 1100), { kind: 'cancel' });
+  for (const text of ['tak albo nie', 'tak proszę', 'cokolwiek', 'Potwierdzasz? Powiedz tak albo nie.']) {
+    assert.deepEqual(s.routeReply(p, text, 1100), { kind: 'reprompt' });
+    assert.deepEqual(s.routeReply({ ...p, reprompts: 1 }, text, 1100), { kind: 'cancel' });
+  }
+  assert.deepEqual(s.routeReply(p, 'tak', 60100), { kind: 'confirm' });
+  assert.deepEqual(s.routeReply(p, 'tak', 60101), { kind: 'expired' });
+});

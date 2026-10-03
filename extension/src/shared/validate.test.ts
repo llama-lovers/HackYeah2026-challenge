@@ -64,3 +64,7 @@ test('consent container overrides benign labels and known-safe controls', () => 
     assert.deepEqual(validateProposal(proposal, consentTarget, { confirmed: true }), { ok: true, kind: 'click' });
   }
 });
+test('model can add confirmation but cannot remove payment or consent classification', () => {
+  assert.deepEqual(validateProposal({ ...proposal, needs_confirmation: true }, { ...target, name: 'Pokaż mapę' }), { ok: false, reason: 'needs_confirmation' });
+  for (const t of [{ ...target, name: 'Zapłać' }, { ...target, consent: true }]) assert.deepEqual(validateProposal({ ...proposal, needs_confirmation: false }, t), { ok: false, reason: 'irreversible' });
+});

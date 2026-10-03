@@ -309,3 +309,70 @@ test('none actions and zero-step dialog replies are spoken without charging a st
     await localCommand(text); assert.deepEqual(announced(), [expected]); assert(!tabCalls.some(c => c.message.type === 'EXECUTE'));
   }
 });
+const actionPending = (extra: object = {}) => ({ kind: 'confirm_action', id: 'action-pending', tabId: 7, createdAt: Date.now(), reprompts: 0, proposal: { ...clickProposal, say: 'untrusted model text' }, epoch: 19, docId: 'original-document', preSnapshot: { ...snapshot, nodes: [button] }, name: 'Zapłać', role: 'button', category: 'irreversible', ...extra });
+test('confirmed action uses exactly the stored proposal document and epoch with no snapshot or fetch', async () => {
+  const requests = localAdapter(); const p = actionPending(); store.set('pending', p);
+  tabHandler = (_tab, m) => m.type === 'EXECUTE' ? { ok: true, kind: 'click', name: 'Zapłać', role: 'button', diff: { ...emptyDiff, added: ['Zapłacono'] } } : { ok: true };
+  await localCommand('tak');
+  const executions = tabCalls.filter(c => c.message.type === 'EXECUTE'); assert.equal(executions.length, 1);
+  assert.deepEqual(executions[0].message.proposal, p.proposal);
+  assert.equal(executions[0].message.epoch, p.epoch); assert.equal(executions[0].message.docId, p.docId);
+  assert.equal(executions[0].message.confirmed, true);
+  assert(!tabCalls.some(c => c.message.type === 'SNAPSHOT')); assert.deepEqual(requests, []);
+  assert.deepEqual(announced(), ['Kliknąłem Zapłać. Na stronie pojawiło się: Zapłacono.']);
+  assert.equal(store.has('pending'), false);
+  tabCalls.length = 0; await localCommand('tak');
+  assert.deepEqual(announced(), ['Nie ma nic do potwierdzenia.']); assert(!tabCalls.some(c => c.message.type === 'EXECUTE'));
+});
+test('action confirmation expires and never executes on another tab or a closed tab', async () => {
+  const requests = localAdapter();
+  for (const [extra, expected] of [[{ createdAt: Date.now() - 61000 }, 'Minął czas na odpowiedź. Powiedz polecenie jeszcze raz.'], [{ tabId: 9 }, 'Nie ma nic do potwierdzenia.']] as const) {
+    tabCalls.length = 0; store.set('pending', actionPending(extra)); await localCommand('tak');
+    assert.deepEqual(announced(), [expected]); assert.equal(store.has('pending'), false); assert(!tabCalls.some(c => c.message.type === 'EXECUTE'));
+  }
+  store.set('pending', actionPending()); await pipeline.handleTabRemoved(7); assert.equal(store.has('pending'), false);
+  assert.deepEqual(requests, []);
+});
+test('action confirmation cancels for no and cancel and reprompts once for unrelated speech', async () => {
+  const requests = localAdapter();
+  for (const text of ['nie', 'anuluj']) {
+    tabCalls.length = 0; store.set('pending', actionPending()); await localCommand(text);
+    assert.deepEqual(announced(), ['Anulowałem.']); assert.equal(store.has('pending'), false);
+  }
+  tabCalls.length = 0; store.set('pending', actionPending());
+  await localCommand('sprawdź status przesyłki 12345678');
+  assert.equal((store.get('pending') as any).reprompts, 1);
+  await localCommand('cokolwiek'); assert.equal(store.has('pending'), false);
+  assert.deepEqual(announced(), ['Powiedz tak albo nie.', 'Anulowałem.']);
+  assert(!tabCalls.some(c => c.message.type === 'EXECUTE' || c.message.type === 'SNAPSHOT')); assert.deepEqual(requests, []);
+});
+test('concurrent action replies consume the pending proposal at most once', async () => {
+  const requests = localAdapter(), run = makeRun(); store.set('pending', actionPending());
+  tabHandler = (_tab, m) => m.type === 'EXECUTE' ? { ok: true, kind: 'click', name: 'Zapłać', role: 'button', diff: emptyDiff } : { ok: true };
+  await Promise.all([pipeline.runCommand(run.turnId, 7, 'tak'), pipeline.runCommand(run.turnId, 7, 'tak')]);
+  assert.equal(tabCalls.filter(c => c.message.type === 'EXECUTE').length, 1); assert.equal(store.has('pending'), false); assert.deepEqual(requests, []);
+});
+test('stale execution never writes an action confirmation for the replacement owner', async () => {
+  localAdapter(); const run = makeRun();
+  tabHandler = (_tab, m) => {
+    if (m.type === 'EXECUTE') { store.set('turn', { phase: 'processing', tabId: 7, id: 'replacement', startedAt: Date.now() }); return { ok: false, reason: 'irreversible', confirm: { name: 'Zapłać', role: 'button', category: 'irreversible' } }; }
+    return { ok: true };
+  };
+  assert.equal(await pipeline.performProposal(run, step), 'stopped');
+  assert.equal(store.has('pending'), false); assert.deepEqual(announced(), []);
+});
+test('superseded reply cannot consume the replacement owners confirmation', async () => {
+  const requests = localAdapter(); const p = actionPending(); store.set('pending', p);
+  makeRun(); await pipeline.runCommand('superseded', 7, 'tak');
+  assert.deepEqual(store.get('pending'), p);
+  assert(!tabCalls.some(c => c.message.type === 'EXECUTE')); assert.deepEqual(requests, []);
+});
+test('confirmation stores DOM name and exact proposal while withholding the click', async () => {
+  localAdapter(); const run = makeRun();
+  tabHandler = (_tab, m) => m.type === 'EXECUTE' ? { ok: false, reason: 'irreversible', confirm: { name: 'Zapłać', role: 'button', category: 'irreversible' } } : { ok: true };
+  await pipeline.performProposal(run, step);
+  const pending = store.get('pending') as any;
+  assert.equal(pending.kind, 'confirm_action'); assert.deepEqual(pending.proposal, step.proposal);
+  assert.equal(pending.docId, step.docId); assert.equal(pending.epoch, step.epoch); assert.deepEqual(pending.preSnapshot, step.preSnapshot);
+  assert.deepEqual(announced(), ['Chcę kliknąć „Zapłać”. Potwierdzasz? Powiedz tak albo nie.']);
+});

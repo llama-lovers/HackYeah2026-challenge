@@ -20,13 +20,29 @@ export function isNrb(d: string): boolean {
   for (const digit of d.slice(2) + '2521' + d.slice(0, 2)) remainder = (remainder * 10 + +digit) % 97;
   return remainder === 1;
 }
-const RUN = /(?<!\d[ -]?)(?:\d[ -]?){7,29}\d(?![ -]?\d)/g;
+const RUN = /\d+(?:[ -]\d+)*/g;
 const IBAN = /\bPL\s?\d{2}(?:\s?\d{4}){6}\b/gi;
 export function maskText(t: string): string {
   return t.replace(IBAN, m => isNrb(m.replace(/\D/g, '')) ? MASK : m)
     .replace(RUN, m => {
-      const digits = m.replace(/\D/g, '');
-      return isPesel(digits) || isLuhn(digits) || isNrb(digits) ? MASK : m;
+      // A separator can delimit identifiers or group one identifier. Recognize
+      // complete grouping formats first; never checksum substrings of a parcel.
+      const tokens = m.match(/\d+|[ -]/g)!;
+      const numbers = tokens.filter((_t, i) => i % 2 === 0);
+      let out = '';
+      for (let i = 0; i < numbers.length;) {
+        let count = 1;
+        const patterns = [[4,4,4,4,4,4], [2,4,4,4,4,4,4], [4,4,4,4], [4,6,5], [3,3,3,2]];
+        for (const lengths of patterns) {
+          if (lengths.every((length, offset) => numbers[i + offset]?.length === length)) { count = lengths.length; break; }
+        }
+        const part = tokens.slice(i * 2, (i + count) * 2 - 1).join('');
+        const digits = part.replace(/\D/g, '');
+        out += (isPesel(digits) || isLuhn(digits) || isNrb(digits) ? MASK : part);
+        i += count;
+        if (i < numbers.length) out += tokens[i * 2 - 1];
+      }
+      return out;
     });
 }
 export const SENSITIVE_AUTOCOMPLETE = new Set(['cc-number', 'cc-csc', 'cc-exp', 'cc-exp-month', 'cc-exp-year', 'one-time-code', 'current-password', 'new-password']);

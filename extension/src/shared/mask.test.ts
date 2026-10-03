@@ -42,3 +42,14 @@ test('field signals mask independently of checksum, without marking lookup field
   for (const label of ['Numer PESEL', 'Numer konta (IBAN)', 'Numer karty', 'CVV', 'Kod SMS', 'Kod BLIK', 'Hasło', 'haslo', 'Kod jednorazowy', 'PIN']) assert.equal(isSensitiveField({ tag: 'input', label }), true, label);
   for (const label of ['Numer przesyłki', 'E-mail', 'Wpisz numer przesyłki', 'Szukaj', 'spinka']) assert.equal(isSensitiveField({ tag: 'input', label }), false, label);
 });
+test('neighboring identifiers cannot defeat whole-token masking', () => {
+  for (const [input, expected] of [
+    ['PESEL 44051401359 600100200', 'PESEL [ukryte] 600100200'],
+    ['44051401359 44051401359', '[ukryte] [ukryte]'],
+    ['4111111111111111 600100200', '[ukryte] 600100200'],
+    ['44051401359 4111 1111 1111 1111', '[ukryte] [ukryte]'],
+    ['123456789012345678901234 44051401359', '123456789012345678901234 [ukryte]'],
+    ['12345678 44051401359', '12345678 [ukryte]'],
+    ['PESEL 440 514 013 59 600 100 200', 'PESEL [ukryte] 600 100 200'],
+  ]) assert.equal(maskText(input!), expected);
+});

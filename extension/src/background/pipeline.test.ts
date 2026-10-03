@@ -311,6 +311,31 @@ test('none actions and zero-step dialog replies are spoken without charging a st
 });
 const actionPending = (extra: object = {}) => ({ kind: 'confirm_action', id: 'action-pending', tabId: 7, createdAt: Date.now(), reprompts: 0, proposal: { ...clickProposal, say: 'untrusted model text' }, epoch: 19, docId: 'original-document', preSnapshot: { ...snapshot, nodes: [button] }, name: 'Zapłać', role: 'button', category: 'irreversible', ...extra });
 const ambiguousSnapshot = {...snapshot,epoch:19,nodes:[{kind:'heading',role:'heading',name:'Kraków'},{...button,name:'Usuń'},{kind:'heading',role:'heading',name:'Poznań'},{...button,id:'e2',name:'Usuń'}]};
+test('secret and captcha utterances preserve pending dialogs and never snapshot execute or fetch', async () => {
+  const requests=localAdapter(); const p=actionPending(); store.set('pending',p);
+  for(const text of ['wpisz moje hasło Tajne123','podaj kod BLIK 123456','zaznacz, że nie jestem robotem']) {
+    tabCalls.length=0; await localCommand(text);
+    assert.deepEqual(store.get('pending'),p);
+    assert(!tabCalls.some(c=>['SNAPSHOT','EXECUTE'].includes(c.message.type))); assert.deepEqual(requests,[]);
+    assert.match(announced()[0]!,/zaufaną osobę/);
+    assert(!announced().join(' ').includes('Tajne123')); assert(!announced().join(' ').includes('123456'));
+  }
+});
+test('captcha names and hints refuse proposals including stored and chosen controls before EXECUTE', async () => {
+  const s={...snapshot,nodes:[{...button,name:'Nie jestem robotem'}]};
+  withProposal(clickProposal); tabHandler=(_tab,m)=>m.type==='SNAPSHOT'?{ok:true,docId:'doc',snapshot:s}:{ok:true};
+  await localCommand('kliknij pierwszy'); assert(!tabCalls.some(c=>c.message.type==='EXECUTE')); assert.deepEqual(announced(),['Nie rozwiązuję zabezpieczeń captcha. Poproś o pomoc zaufaną osobę.']);
+  tabCalls.length=0; const requests=localAdapter(); store.set('pending',actionPending({preSnapshot:s})); await localCommand('tak');
+  assert(!tabCalls.some(c=>c.message.type==='EXECUTE')); assert.deepEqual(requests,[]);
+  tabCalls.length=0; store.set('pending',{...actionPending(),kind:'choose_option',action:'click',text:'',needsConfirmation:false,preSnapshot:{...s,nodes:[{...button,hint:'reCAPTCHA'}]},options:[{id:'e1',name:'klik',role:'button'},{id:'e2',name:'klik',role:'button'}]});
+  await localCommand('jeden'); assert(!tabCalls.some(c=>c.message.type==='EXECUTE'));
+});
+test('missing parcel status reports the captcha instead of generic failure', async () => {
+  localAdapter(); const run=makeRun();
+  tabHandler=(_tab,m)=>m.type==='SNAPSHOT'?{ok:true,docId:'doc',snapshot:{...snapshot,nodes:[field,button]}}:m.type==='EXECUTE'?{ok:true,kind:m.proposal.action,name:'Znajdź',role:'button',diff:emptyDiff}:m.type==='READ_STATUS'?{ok:false,error:'not_found',captcha:true}:{ok:true};
+  await pipeline.runParcelSearch(run,'12345678');
+  assert.deepEqual(announced(),['Strona pokazuje zabezpieczenie captcha. Nie rozwiązuję go. Poproś o pomoc zaufaną osobę.']);
+});
 test('duplicate model target asks without execution then chooses stored target into contextual confirmation', async () => {
   const requests: string[] = [];
   g.fetch = async (url: string) => {requests.push(String(url));return {ok:true,json:async()=>clickProposal};};

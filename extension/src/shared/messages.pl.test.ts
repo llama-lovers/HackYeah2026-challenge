@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as m from './messages.pl.ts';
 import type { RejectReason } from './validate.ts';
+test('sensitive-field refusal gives a reason and trusted-person next step', () => {
+  assert.equal(m.rejectionText('sensitive_fill'),'Tego pola nie wypełniam, bo jest na dane poufne. Wypełnij je samodzielnie albo poproś o pomoc zaufaną osobę.');
+});
 test('announces validated actions and unchanged effects in exact Polish', () => {
   assert.equal(m.clickPre('Znajdź'), 'Klikam Znajdź.');
   assert.equal(m.fillPre('Wpisz numer przesyłki'), 'Wpisuję w pole Wpisz numer przesyłki.');

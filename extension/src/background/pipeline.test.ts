@@ -310,6 +310,43 @@ test('none actions and zero-step dialog replies are spoken without charging a st
   }
 });
 const actionPending = (extra: object = {}) => ({ kind: 'confirm_action', id: 'action-pending', tabId: 7, createdAt: Date.now(), reprompts: 0, proposal: { ...clickProposal, say: 'untrusted model text' }, epoch: 19, docId: 'original-document', preSnapshot: { ...snapshot, nodes: [button] }, name: 'Zapłać', role: 'button', category: 'irreversible', ...extra });
+const ambiguousSnapshot = {...snapshot,epoch:19,nodes:[{kind:'heading',role:'heading',name:'Kraków'},{...button,name:'Usuń'},{kind:'heading',role:'heading',name:'Poznań'},{...button,id:'e2',name:'Usuń'}]};
+test('duplicate model target asks without execution then chooses stored target into contextual confirmation', async () => {
+  const requests: string[] = [];
+  g.fetch = async (url: string) => {requests.push(String(url));return {ok:true,json:async()=>clickProposal};};
+  tabHandler = (_tab,m) => m.type==='SNAPSHOT' ? {ok:true,docId:'original-document',snapshot:ambiguousSnapshot} : m.type==='EXECUTE' ? {ok:false,reason:'irreversible',confirm:{name:'Usuń',role:'button',category:'irreversible'}} : {ok:true};
+  await localCommand('kliknij Usuń');
+  assert.equal(tabCalls.filter(c=>c.message.type==='EXECUTE').length,0);
+  const p = store.get('pending') as any; assert.equal(p.kind,'choose_option');
+  assert.deepEqual(announced(),['Pasuje kilka elementów. Jeden: Usuń, Kraków. Dwa: Usuń, Poznań. Który? Powiedz numer.']);
+  tabCalls.length=0; requests.length=0; await localCommand('dwa');
+  const execution = tabCalls.find(c=>c.message.type==='EXECUTE')!.message;
+  assert.equal(execution.proposal.target,'e2'); assert.equal(execution.epoch,19); assert.equal(execution.docId,'original-document');
+  assert(!tabCalls.some(c=>c.message.type==='SNAPSHOT')); assert.deepEqual(requests,[]);
+  assert.deepEqual(announced(),['Chcę kliknąć „Usuń”, Poznań. Potwierdzasz? Powiedz tak albo nie.']);
+  assert.equal((store.get('pending') as any).kind,'confirm_action');
+});
+test('model choose rejects fewer than two valid IDs and carries confirmation flag to exact stored reply', async () => {
+  const s = {...snapshot,epoch:9,nodes:[button,{...button,id:'e2',name:'Pomoc'},{...button,id:'e3',state:{disabled:true}},{...button,id:'e4',kind:'text'},{...button,id:'e5',role:'textbox'}]};
+  tabHandler = (_tab,m) => m.type==='SNAPSHOT' ? {ok:true,docId:'doc-choice',snapshot:s} : m.type==='EXECUTE' ? {ok:false,reason:'needs_confirmation',confirm:{name:'Pomoc',role:'button',category:'model_flag'}} : {ok:true};
+  for(const id of ['unknown','e1','e3','e4','e5','']) {
+    withProposal({...clickProposal,action:'choose',target:'',option_1:'e1',option_2:id});
+    tabCalls.length=0; await localCommand('kliknij coś');
+    assert.deepEqual(announced(),['Nie jestem pewien, o który element chodzi. Powiedz polecenie dokładniej.']);
+    assert.equal(store.has('pending'),false); assert(!tabCalls.some(c=>c.message.type==='EXECUTE'));
+  }
+  withProposal({...clickProposal,action:'choose',target:'',option_1:'e1',option_2:'e2',needs_confirmation:true});
+  await localCommand('kliknij coś');
+  const requests=localAdapter(); tabCalls.length=0; await localCommand('numer dwa');
+  const execution=tabCalls.find(c=>c.message.type==='EXECUTE')!.message;
+  assert.equal(execution.proposal.needs_confirmation,true); assert.equal(execution.proposal.target,'e2');
+  assert.equal(execution.epoch,9); assert.equal(execution.docId,'doc-choice');
+  assert(!tabCalls.some(c=>c.message.type==='SNAPSHOT')); assert.deepEqual(requests,[]);
+});
+test('unique model target executes directly without a numbered question', async () => {
+  withProposal(clickProposal); tabHandler = (_tab,m) => m.type==='SNAPSHOT' ? {ok:true,docId:'doc',snapshot:{...snapshot,nodes:[button]}} : m.type==='EXECUTE' ? {ok:true,kind:'click',name:'Znajdź',role:'button',diff:emptyDiff} : {ok:true};
+  await localCommand('kliknij Znajdź'); assert.equal(tabCalls.filter(c=>c.message.type==='EXECUTE').length,1); assert.equal(store.has('pending'),false);
+});
 test('confirmed action uses exactly the stored proposal document and epoch with no snapshot or fetch', async () => {
   const requests = localAdapter(); const p = actionPending(); store.set('pending', p);
   tabHandler = (_tab, m) => m.type === 'EXECUTE' ? { ok: true, kind: 'click', name: 'Zapłać', role: 'button', diff: { ...emptyDiff, added: ['Zapłacono'] } } : { ok: true };

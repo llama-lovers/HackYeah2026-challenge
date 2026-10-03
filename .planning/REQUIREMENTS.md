@@ -9,9 +9,9 @@ Conventions: code, identifiers and commits in English; every user-facing message
 
 ### Voice Input
 
-- [ ] **VOICE-01**: User can start and stop recording with a single toggle keyboard shortcut (push-to-talk), with no mouse
-- [ ] **VOICE-02**: User grants microphone access once on the extension's options page and is never prompted on websites
-- [ ] **VOICE-03**: Recorded audio is transcribed to Polish text via the teammate's Whisper module (OpenRouter) through the proxy, behind a stable `transcribe(audio) -> text` interface
+- [x] **VOICE-01**: User can start and stop recording with a single toggle keyboard shortcut (push-to-talk), with no mouse
+- [x] **VOICE-02**: User grants microphone access once on the extension's options page and is never prompted on websites
+- [x] **VOICE-03**: Recorded audio is transcribed to Polish text via the teammate's Whisper module (OpenRouter) through the proxy, behind a stable `transcribe(audio) -> text` interface
 - [ ] **VOICE-04**: Recording auto-stops after a short silence
 - [ ] **VOICE-05**: User hears an earcon when the mic opens and when it closes
 
@@ -28,13 +28,13 @@ Conventions: code, identifiers and commits in English; every user-facing message
 
 ### Page Understanding
 
-- [ ] **PAGE-01**: Extension builds a simplified accessibility snapshot of the page (roles, names, states, short element ids) instead of sending raw HTML or screenshots
+- [x] **PAGE-01**: Extension builds a simplified accessibility snapshot of the page (roles, names, states, short element ids) instead of sending raw HTML or screenshots
 - [ ] **PAGE-02**: User can ask "co tu jest?" and hears a 1–2 sentence page summary
 - [ ] **PAGE-03**: User can ask "co mogę zrobić?" and hears at most 3–5 available actions
 
 ### Actions
 
-- [ ] **ACT-01**: User can click an element by describing it in Polish ("kliknij Szukaj")
+- [x] **ACT-01**: User can click an element by describing it in Polish ("kliknij Szukaj")
 - [ ] **ACT-02**: User can fill a text field by dictation; the extension fires real input/change events so the page reacts (e.g. InPost enables the search button)
 - [ ] **ACT-03**: User can scroll up, down and to the top
 - [ ] **ACT-04**: The model returns a structured action proposal (action, element id, text to say, needs-confirmation); the extension validates that the element exists, is visible and enabled, and that its role matches before executing
@@ -103,9 +103,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| VOICE-01 | Phase 1 | Pending |
-| VOICE-02 | Phase 1 | Pending |
-| VOICE-03 | Phase 1 | Pending |
+| VOICE-01 | Phase 1 | Complete |
+| VOICE-02 | Phase 1 | Complete |
+| VOICE-03 | Phase 1 | Complete |
 | VOICE-04 | Phase 4 | Pending |
 | VOICE-05 | Phase 4 | Pending |
 | OUT-01 | Phase 1 | Pending |
@@ -116,10 +116,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OUT-06 | Phase 4 | Pending |
 | OUT-07 | Phase 3 | Pending |
 | OUT-08 | Phase 3 | Pending |
-| PAGE-01 | Phase 1 | Pending |
+| PAGE-01 | Phase 1 | Complete |
 | PAGE-02 | Phase 3 | Pending |
 | PAGE-03 | Phase 3 | Pending |
-| ACT-01 | Phase 1 | Pending |
+| ACT-01 | Phase 1 | Complete |
 | ACT-02 | Phase 1 | Pending |
 | ACT-03 | Phase 3 | Pending |
 | ACT-04 | Phase 1 | Pending |

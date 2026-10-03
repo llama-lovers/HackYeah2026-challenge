@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { validateProposal } from './validate.ts';
 import type { Proposal, ResolvedTarget, RejectReason } from './validate.ts';
 const proposal: Proposal = { action: 'click', target: 'e1', text: '', needs_confirmation: false, say: '' };
-const target: ResolvedTarget = { exists: true, epochMatches: true, connected: true, visible: true, disabled: false, role: 'button', sensitive: false, name: 'Znajdź', maxLength: null, submitsNonLookupForm: false };
+const target: ResolvedTarget = { exists: true, epochMatches: true, connected: true, visible: true, disabled: false, role: 'button', sensitive: false, name: 'Znajdź', maxLength: null, submitsNonLookupForm: false, sideEffectSignals: false };
 const cases: [RejectReason, Partial<Proposal>, Partial<ResolvedTarget> | null][] = [
   ['unknown_action', { action: 'navigate' }, {}], ['not_found', {}, null],
   ['not_found', {}, { exists: false }], ['stale', {}, { epochMatches: false }],

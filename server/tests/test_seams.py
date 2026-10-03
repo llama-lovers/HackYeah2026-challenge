@@ -46,10 +46,63 @@ def test_whisper_threadpool_and_errors(monkeypatch, outcome, status, expected):
     assert result.status_code == status and result.json() == expected
 
 
-def test_missing_whisper_module():
+def test_whisper_without_key_fails_closed(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     with make_client(lambda request: pytest.fail("unexpected upstream"), stt_mode="whisper") as client:
         result = client.post("/api/transcribe", content=b"audio", headers={"content-type": "audio/wav"})
     assert result.status_code == 502 and result.json() == {"error": "provider_error"}
+
+
+def _whisper(monkeypatch, handler, model=None):
+    from app import stt_whisper
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.delenv("OPENROUTER_BASE_URL", raising=False)
+    if model:
+        monkeypatch.setenv("STT_MODEL", model)
+    else:
+        monkeypatch.delenv("STT_MODEL", raising=False)
+    monkeypatch.setattr(stt_whisper, "transport", httpx.MockTransport(handler))
+    return stt_whisper.transcribe_whisper
+
+
+@pytest.mark.parametrize("mime,fmt", [("audio/webm;codecs=opus", "webm"), ("audio/wav", "wav")])
+def test_whisper_request_shape(monkeypatch, mime, fmt):
+    captured = []
+    def handler(request):
+        captured.append(request)
+        return httpx.Response(200, json={"text": "  kliknij Znajdź \n"})
+    assert _whisper(monkeypatch, handler)(b"\x00audio", mime) == "kliknij Znajdź"
+    request = captured[0]
+    body = json.loads(request.content)
+    assert str(request.url) == "https://openrouter.ai/api/v1/audio/transcriptions"
+    assert request.headers["authorization"] == "Bearer test-key"
+    assert body == {"model": "openai/whisper-large-v3-turbo", "language": "pl",
+                    "input_audio": {"data": "AGF1ZGlv", "format": fmt}}
+
+
+def test_whisper_model_switch_and_silence(monkeypatch):
+    captured = []
+    def handler(request):
+        captured.append(json.loads(request.content))
+        return httpx.Response(200, json={"text": "   "})
+    assert _whisper(monkeypatch, handler, model="nvidia/parakeet-tdt-0.6b-v3")(b"a", "audio/wav") == ""
+    assert captured[0]["model"] == "nvidia/parakeet-tdt-0.6b-v3" and "language" not in captured[0]
+
+
+@pytest.mark.parametrize("handler,mime,code", [
+    (lambda r: httpx.Response(500, json={"error": {"message": "x"}}), "audio/wav", "provider_error"),
+    (lambda r: httpx.Response(415), "audio/wav", "unsupported_format"),
+    (lambda r: httpx.Response(200, json={"error": {"message": "x"}}), "audio/wav", "provider_error"),
+    (lambda r: httpx.Response(200, content=b"not json"), "audio/wav", "provider_error"),
+    (lambda r: (_ for _ in ()).throw(httpx.ReadTimeout("slow")), "audio/wav", "timeout"),
+    (lambda r: (_ for _ in ()).throw(httpx.ConnectError("down")), "audio/wav", "provider_error"),
+    (lambda r: pytest.fail("unexpected upstream"), "audio/mpeg", "unsupported_format"),
+])
+def test_whisper_errors(monkeypatch, handler, mime, code):
+    from app.stt import TranscriptionError
+    with pytest.raises(TranscriptionError) as exc:
+        _whisper(monkeypatch, handler)(b"a", mime)
+    assert exc.value.code == code
 
 
 def test_effect_schema_and_limits():

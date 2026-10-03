@@ -4,11 +4,14 @@ export const LIVE_REGION_ID = 'voice-agent-live-region';
 export const COMMAND_TOGGLE = 'toggle-listening';
 export const SESSION_KEYS = { turn: 'turn', pendingEffect: 'pendingEffect', pending: 'pending' } as const;
 export const PENDING_EFFECT_MAX_AGE_MS = 15000;
-export type ToContent = { type: 'PING' } | { type: 'SNAPSHOT' } | { type: 'EXECUTE'; epoch: number; proposal: Proposal; turnId: string; jobId: string; docId: string; confirmed?: boolean; context?: string } | { type: 'ANNOUNCE'; text: string } | { type: 'SETTLE_DIFF'; preSnapshot: Snapshot } | { type: 'READ_STATUS'; number: string };
+export type ToContent = { type: 'PING' } | { type: 'SNAPSHOT' } | { type: 'EXECUTE'; epoch: number; proposal: Proposal; turnId: string; jobId: string; docId: string; confirmed?: boolean; context?: string } | { type: 'ANNOUNCE'; text: string } | { type: 'SETTLE_DIFF'; preSnapshot: Snapshot } | { type: 'READ_STATUS'; number: string } | { type: 'CANDIDATES' } | { type: 'RECHECK_CANDIDATES'; docId: string; epoch: number; ids: string[] };
 export type ParcelStatus = { kind: 'status' | 'error'; title: string; description: string };
 export type ReadStatusResult = { ok: true; status: ParcelStatus } | { ok: false; error: 'not_found' | 'invalid_number'; captcha?: boolean };
 export type SnapshotResult = { ok: true; snapshot: Snapshot; docId: string } | { ok: false; error: 'snapshot_failed' };
 export type ExecuteResult = { ok: true; kind: 'click' | 'fill'; name: string; role: string; diff?: PageDiff } | { ok: true; kind: 'none' } | { ok: false; reason: RejectReason; confirm?: { name: string; role: string; category: ConfirmCategory } };
+// Read-only exploration: the fresh masked snapshot with the locally eligible controls, and a later recheck of suggested ids. Both are bound to document id and epoch.
+export type CandidatesResult = { ok: true; snapshot: Snapshot; docId: string; candidates: ExplorationCandidate[]; incomplete: boolean } | { ok: false; error: 'snapshot_failed' };
+export type RecheckResult = { ok: true; candidates: ExplorationCandidate[] } | { ok: false; reason: 'stale' };
 export type SettleDiffResult = { ok: true; diff: PageDiff } | { ok: false; error: 'snapshot_failed' };
 export type FromContent = { type: 'READY' } | { type: 'EXECUTING'; turnId: string; jobId: string };
 // Every recording command and offscreen event carries the immutable id of the turn that owns it, so late events can be ignored.
@@ -31,6 +34,11 @@ export interface ActionRequestBody { utterance: string; snapshot: string }
 export interface ExecutedAction { kind: 'click' | 'fill'; name: string; role: string }
 export interface EffectRequestBody { action: ExecutedAction; diff: PageDiff }
 export interface EffectResponse { say: string }
+export type ExplorationMode = 'summary' | 'actions';
+export type Verbosity = 'concise' | 'standard' | 'detailed';
+export interface ExplorationCandidate { id: string; role: string; name: string }
+export interface ExplorationRequestBody { mode: ExplorationMode; verbosity: Verbosity; snapshot: string; candidates: ExplorationCandidate[] }
+export interface ExplorationResponse { sentences: string[]; candidate_ids: string[] }
 export interface TranscribeResponse { text: string }
 export interface ProxyErrorBody { error: string }
 export interface PendingEffectJob { id: string; turnId: string; tabId: number; state: 'proposed' | 'executed' | 'claimed'; action: ExecutedAction; preSnapshot: Snapshot; startedAt: number; effect?: 'model' | 'local' }

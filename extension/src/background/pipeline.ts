@@ -1,5 +1,5 @@
 import { SESSION_KEYS, PENDING_EFFECT_MAX_AGE_MS } from '../shared/protocol.ts';
-import type { FromOffscreen, SnapshotResult, ExecuteResult, ExecutedAction, EffectResponse, PendingEffectJob, SettleDiffResult, ReadStatusResult } from '../shared/protocol.ts';
+import type { FromOffscreen, SnapshotResult, CandidatesResult, ExecuteResult, ExecutedAction, EffectResponse, PendingEffectJob, SettleDiffResult, ReadStatusResult } from '../shared/protocol.ts';
 import type { PageDiff, Snapshot } from '../shared/snapshot-format.ts';
 import { parseIntent, isCaptchaLabel } from '../shared/intent.ts';
 import { wordsToDigits, digitsToSpokenGroups, speakable } from '../shared/polish-speech.ts';
@@ -14,6 +14,7 @@ import type { Proposal, ConfirmCategory } from '../shared/validate.ts';
 import { onToggle, isStale } from '../shared/turn.ts';
 import type { TurnState } from '../shared/turn.ts';
 import { maskText } from '../shared/mask.ts';
+import { parseExploreCommand, decodeSummary, decodeActions, decodeRecheck, ACTION_CAPS } from '../shared/exploration.ts';
 import { toModelText, spokenName } from '../shared/snapshot-format.ts';
 import * as msg from '../shared/messages.pl.ts';
 import { postJson, EgressBlockedError } from './proxy.ts';
@@ -35,10 +36,27 @@ export async function ensureOffscreen(): Promise<void> {
 export async function ping(tabId: number): Promise<boolean> {
   try { return (await chrome.tabs.sendMessage(tabId, { type: 'PING' }, { frameId: 0 })).ok === true; } catch { return false; }
 }
-export function isSupportedUrl(url?: string): boolean {
+// Ordinary top-level documents only. Browser-internal pages, extension stores, missing and malformed URLs never get a recording session.
+export function isAccessibleUrl(url?: string): boolean {
   if (!url) return false;
-  const u = new URL(url);
-  return ['https://inpost.pl', 'https://www.inpost.pl'].includes(u.origin) || (u.origin === new URL(__PROXY_URL__).origin && u.pathname.startsWith('/fixtures/'));
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    if (u.hostname === 'chromewebstore.google.com' || (u.hostname === 'chrome.google.com' && u.pathname.startsWith('/webstore')) || (u.hostname === 'microsoftedge.microsoft.com' && u.pathname.startsWith('/addons'))) return false;
+    return true;
+  } catch { return false; }
+}
+// Runs on an explicit keyboard command (the activeTab grant): ping frame 0, inject the packaged content bundle into the isolated world when missing,
+// ping again. Failures are spoken through the fallback voice because no page receiver may exist; recording must not start after one.
+export async function preparePageAccess(tab: chrome.tabs.Tab): Promise<boolean> {
+  const tabId = tab.id;
+  if (tabId === undefined || !isAccessibleUrl(tab.url)) { speakTts(msg.PAGE_UNSUPPORTED); return false; }
+  if (await ping(tabId)) return true;
+  try { await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: ['content/content.js'], world: 'ISOLATED' }); }
+  catch { speakTts(msg.PAGE_ACCESS_FAILED); return false; }
+  if (await ping(tabId)) return true;
+  speakTts(msg.PAGE_ACCESS_FAILED);
+  return false;
 }
 export function speakTts(text: string): void { chrome.tts.speak(text, { lang: 'pl-PL', rate: 1.0 }); }
 export async function announce(tabId: number | undefined, text: string): Promise<void> {
@@ -87,11 +105,7 @@ async function toggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promi
     if (state.phase !== 'idle') { abortTurn(state.id); await chrome.storage.session.remove(SESSION_KEYS.pendingEffect); }
     // Reserve the recording owner before any asynchronous setup; failures only release this reservation.
     await setTurn(next);
-    if (!(await ping(tab.id))) {
-      speakTts(isSupportedUrl(tab.url) ? msg.RELOAD_PAGE : msg.ONLY_INPOST);
-      await resetTurnIf(next.id);
-      return;
-    }
+    if (!(await preparePageAccess(tab))) { await resetTurnIf(next.id); return; }
     try { await ensureOffscreen(); await chrome.runtime.sendMessage({ target: 'offscreen', type: 'REC_START', turnId: next.id }); }
     catch { await announce(tab.id, msg.MIC_NO_DEVICE); await resetTurnIf(next.id); }
   } else {
@@ -204,6 +218,52 @@ async function parcelReadback(run: CommandRun, digits: string): Promise<void> {
     await say(msg.parcelReadback(digitsToSpokenGroups(digits)));
   } catch { await say(msg.SNAPSHOT_FAILED); }
 }
+// Read-only exploration: it requests a snapshot and speaks; it never sends EXECUTE, /api/action or stores a pending interaction.
+async function runSummary(run: CommandRun): Promise<void> {
+  const { turnId, tabId, signal } = run;
+  const say = async (text: string) => { if (await ownsTurn(turnId)) await announce(tabId, text); };
+  let result: SnapshotResult;
+  try {
+    result = await chrome.tabs.sendMessage(tabId, { type: 'SNAPSHOT' }, { frameId: 0 });
+    if (!result.ok) throw new Error('snapshot_failed');
+  } catch { await say(msg.SNAPSHOT_FAILED); return; }
+  if (!(await ownsTurn(turnId))) return;
+  if (!result.snapshot.nodes.length) { await say(msg.PAGE_EMPTY); return; }
+  let reply: unknown;
+  try { reply = await postJson<unknown>('/api/explore', { mode: 'summary', verbosity: 'standard', snapshot: toModelText(result.snapshot), candidates: [] }, 20000, signal); }
+  catch (error) { await say(error instanceof EgressBlockedError ? msg.SNAPSHOT_FAILED : msg.EXPLORE_FAILED); return; }
+  if (!(await ownsTurn(turnId))) return;
+  const sentences = decodeSummary(reply);
+  await say(sentences ? sentences.join(' ') : msg.EXPLORE_FAILED);
+}
+// "co mogę zrobić?": candidates come from the live local policy, the model only ranks them, and the answer is re-judged and rendered locally.
+// The suggested ids live in this function only: they are never sent to EXECUTE, stored as a pending interaction or reused by a later command.
+async function runActions(run: CommandRun): Promise<void> {
+  const { turnId, tabId, signal } = run;
+  const say = async (text: string) => { if (await ownsTurn(turnId)) await announce(tabId, text); };
+  let result: CandidatesResult;
+  try {
+    result = await chrome.tabs.sendMessage(tabId, { type: 'CANDIDATES' }, { frameId: 0 });
+    if (!result.ok) throw new Error('snapshot_failed');
+  } catch { await say(msg.SNAPSHOT_FAILED); return; }
+  if (!(await ownsTurn(turnId))) return;
+  const { snapshot, docId, candidates, incomplete } = result;
+  // Sparse pages report the real count: with nothing eligible the model is not asked and nothing is invented.
+  if (!candidates.length) { await say(incomplete ? msg.NO_ACTIONS_PARTIAL : msg.NO_ACTIONS); return; }
+  let reply: unknown;
+  try { reply = await postJson<unknown>('/api/explore', { mode: 'actions', verbosity: 'standard', snapshot: toModelText(snapshot), candidates }, 20000, signal); }
+  catch (error) { await say(error instanceof EgressBlockedError ? msg.SNAPSHOT_FAILED : msg.ACTIONS_FAILED); return; }
+  if (!(await ownsTurn(turnId))) return;
+  const ids = decodeActions(reply, candidates.map(c => c.id), ACTION_CAPS.standard);
+  if (!ids) { await say(msg.ACTIONS_FAILED); return; }
+  let rechecked: ReturnType<typeof decodeRecheck>;
+  try { rechecked = decodeRecheck(await chrome.tabs.sendMessage(tabId, { type: 'RECHECK_CANDIDATES', docId, epoch: snapshot.epoch, ids }, { frameId: 0 }), ids); }
+  catch { await say(msg.ACTIONS_CHANGED); return; }
+  if (!(await ownsTurn(turnId))) return;
+  if (rechecked === null) { await say(msg.ACTIONS_FAILED); return; }
+  if (rechecked === 'stale' || !rechecked.length) { await say(msg.ACTIONS_CHANGED); return; }
+  await say(msg.actionsList(rechecked, incomplete));
+}
 export async function runCommand(turnId: string, tabId: number | undefined, rawText: string): Promise<'handoff' | void> {
   const signal = turnSignal(turnId);
   const run: CommandRun = { turnId, tabId: tabId!, signal, budget: createBudget() };
@@ -235,6 +295,9 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
       if (parcelReply || pending.kind === 'choose_option' || intent.kind === 'yes' || intent.kind === 'no') { await say(msg.CONFIRM_EXPIRED); return; }
     }
   }
+  // Complete exploration phrases are routed locally, before any action proposal can be requested.
+  const explore = parseExploreCommand(text);
+  if (explore) { if (tabId === undefined) { await say(msg.SNAPSHOT_FAILED); return; } return explore === 'summary' ? runSummary(run) : runActions(run); }
   if (intent.kind === 'track_parcel') {
     if (tabId === undefined) { await say(msg.SNAPSHOT_FAILED); return; }
     const number = wordsToDigits(intent.rest);

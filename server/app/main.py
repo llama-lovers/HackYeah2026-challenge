@@ -17,6 +17,7 @@ from app import stt
 from app.audio_processing import initialize_audio_processing
 from app.config import SERVER_DIR, Settings, load_env_file
 from app.middleware import AccessLogMiddleware, BodyLimitMiddleware, OriginGuardMiddleware
+from app.exploration import EXPLORATION_SCHEMA, ExplorationRequest, build_exploration_messages, validate_exploration_output
 from app.openrouter import UpstreamError, chat_json, warm_up
 from app.prompts import build_action_messages, build_effect_messages
 from app.schemas import ACTION_SCHEMA, EFFECT_SCHEMA, ActionProposal, ActionRequest, EffectRequest, EffectSummary
@@ -91,6 +92,20 @@ def create_app(settings: Settings | None = None,
                                    max_tokens=settings.effect_max_tokens)
             return EffectSummary.model_validate(data).model_dump()
         except ValidationError:
+            return JSONResponse({"error": "model_invalid_output"}, status_code=502)
+        except UpstreamError as exc:
+            return JSONResponse({"error": exc.code}, status_code=502)
+
+    @app.post("/api/explore")
+    async def explore(body: ExplorationRequest):
+        if not settings.openrouter_api_key:
+            return JSONResponse({"error": "no_api_key"}, status_code=503)
+        try:
+            data = await chat_json(app.state.http, settings, schema_name="page_exploration",
+                                   schema=EXPLORATION_SCHEMA, messages=build_exploration_messages(body),
+                                   max_tokens=settings.explore_max_tokens)
+            return validate_exploration_output(body, data).model_dump()
+        except ValueError:  # includes pydantic.ValidationError: never relay unvalidated model output
             return JSONResponse({"error": "model_invalid_output"}, status_code=502)
         except UpstreamError as exc:
             return JSONResponse({"error": exc.code}, status_code=502)

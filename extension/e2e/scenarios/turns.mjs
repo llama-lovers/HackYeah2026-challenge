@@ -29,7 +29,7 @@ export async function run(ctx) {
   await ctx.swEval(`globalThis.__ttsLog=[];globalThis.__realTts=chrome.tts.speak;chrome.tts.speak=(text,options)=>__ttsLog.push({text,options});`);
   try {
     await ctx.toggle();
-    assert((await ctx.swEval('globalThis.__ttsLog')).some(s => s.text === 'Agent działa na razie tylko na stronie InPost.' && s.options.lang === 'pl-PL'));
+    assert((await ctx.swEval('globalThis.__ttsLog')).some(s => s.text === 'Tej strony nie obsługuję. Otwórz zwykłą stronę internetową i spróbuj jeszcze raz.' && s.options.lang === 'pl-PL'));
     assert.equal((await ctx.turnState()).phase, 'idle');
   } finally { await ctx.swEval('chrome.tts.speak=__realTts;delete globalThis.__realTts;'); }
   page = await ctx.openPage('/fixtures/tracking-form.html');

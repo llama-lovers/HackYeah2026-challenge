@@ -18,8 +18,8 @@ export async function run(ctx) {
   const shortcut = await pageEval("document.querySelector('#shortcut-info').textContent");
   assert(shortcut.includes('Alt+Shift+A') || shortcut === OPTIONS_SHORTCUT_MISSING);
   await ctx.swEval('globalThis.__ttsLog = []; chrome.tts.speak = text => globalThis.__ttsLog.push(text)');
-  await ctx.swEval("chrome.storage.session.set({turn:{phase:'idle',startedAt:Date.now()}})");
-  await pageEval("chrome.runtime.sendMessage({target:'sw',type:'MIC_ERROR',code:'not_allowed'})");
+  await ctx.swEval("chrome.storage.session.set({turn:{phase:'recording',startedAt:Date.now(),id:'onboarding-turn'}})");
+  await pageEval("chrome.runtime.sendMessage({target:'sw',turnId:'onboarding-turn',type:'MIC_ERROR',code:'not_allowed'})");
   await waitFor(() => ctx.swEval(`globalThis.__ttsLog.includes(${JSON.stringify(MIC_DENIED)})`), { label: 'denied microphone fallback' });
   await ctx.waitIdle();
 }

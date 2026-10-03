@@ -9,12 +9,14 @@ export type SnapshotResult = { ok: true; snapshot: Snapshot } | { ok: false; err
 export type ExecuteResult = { ok: true; kind: 'click' | 'fill'; name: string; role: string; diff?: PageDiff } | { ok: true; kind: 'none' } | { ok: false; reason: RejectReason };
 export type SettleDiffResult = { ok: true; diff: PageDiff } | { ok: false; error: 'snapshot_failed' };
 export type FromContent = { type: 'READY' };
-export type ToOffscreen = { target: 'offscreen'; type: 'REC_START' } | { target: 'offscreen'; type: 'REC_STOP'; stubText?: string };
-export type FromOffscreen = { target: 'sw'; type: 'MIC_OPEN' } | { target: 'sw'; type: 'REC_STOPPED' } | { target: 'sw'; type: 'TRANSCRIPT'; text: string } | { target: 'sw'; type: 'TRANSCRIBE_ERROR'; code: 'stt_failed' | 'network' | 'not_recording' } | { target: 'sw'; type: 'MIC_ERROR'; code: 'not_allowed' | 'no_device' | 'other' };
+// Every recording command and offscreen event carries the immutable id of the turn that owns it, so late events can be ignored.
+export type ToOffscreen = { target: 'offscreen'; type: 'REC_START'; turnId: string } | { target: 'offscreen'; type: 'REC_STOP'; turnId: string; stubText?: string };
+export type FromOffscreenBody = { type: 'MIC_OPEN' } | { type: 'REC_STOPPED' } | { type: 'TRANSCRIPT'; text: string } | { type: 'TRANSCRIBE_ERROR'; code: 'stt_failed' | 'network' | 'not_recording' } | { type: 'MIC_ERROR'; code: 'not_allowed' | 'no_device' | 'other' };
+export type FromOffscreen = { target: 'sw'; turnId: string } & FromOffscreenBody;
 export function isFromOffscreen(m: unknown): m is FromOffscreen {
   if (typeof m !== 'object' || m === null) return false;
   const v = m as Record<string, unknown>;
-  if (v.target !== 'sw') return false;
+  if (v.target !== 'sw' || typeof v.turnId !== 'string' || !v.turnId) return false;
   switch (v.type) {
     case 'MIC_OPEN': case 'REC_STOPPED': return true;
     case 'TRANSCRIPT': return typeof v.text === 'string';
@@ -29,4 +31,4 @@ export interface EffectRequestBody { action: ExecutedAction; diff: PageDiff }
 export interface EffectResponse { say: string }
 export interface TranscribeResponse { text: string }
 export interface ProxyErrorBody { error: string }
-export interface PendingEffectJob { id: string; tabId: number; action: ExecutedAction; preSnapshot: Snapshot; startedAt: number }
+export interface PendingEffectJob { id: string; turnId: string; tabId: number; action: ExecutedAction; preSnapshot: Snapshot; startedAt: number }

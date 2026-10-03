@@ -10,7 +10,7 @@ test('toggle stops recording and preserves busy processing state', () => {
   const recording = { phase: 'recording', tabId: 7, startedAt: 100, stubText: 'x' } as const;
   const stop = onToggle(recording, 8, 200);
   assert.equal(stop.effect, 'stop');
-  assert.deepEqual(stop.next, { ...recording, phase: 'processing' });
+  assert.deepEqual(stop.next, { ...recording, phase: 'processing', startedAt: 200 });
   const busy = onToggle(stop.next, 8, 300);
   assert.equal(busy.effect, 'busy');
   assert.equal(busy.next, stop.next);

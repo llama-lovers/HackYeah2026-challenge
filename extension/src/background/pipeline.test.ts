@@ -336,6 +336,24 @@ test('missing parcel status reports the captcha instead of generic failure', asy
   await pipeline.runParcelSearch(run,'12345678');
   assert.deepEqual(announced(),['Strona pokazuje zabezpieczenie captcha. Nie rozwiązuję go. Poproś o pomoc zaufaną osobę.']);
 });
+test('secret variants never leave the browser or consume a pending dialog (CR-01)', async () => {
+  const pending = actionPending();
+  for (const keepPending of [false, true]) {
+  for (const text of ['ustaw hasło Tajne123', 'zmień PIN na 1234', 'wpisz kod z wiadomości SMS 731904', 'hasło: Tajne123', 'hasło abcdef', 'oto kod z otrzymanej wiadomości SMS: 731904']) {
+    if (keepPending) store.set('pending', pending); else store.delete('pending');
+    tabCalls.length = 0;
+    let fetches = 0;
+    g.fetch = async () => { fetches++; return {ok:true,json:async()=>({action:'none',target:'',text:'',needs_confirmation:false,say:'Nie rozumiem.'})}; };
+    tabHandler = (_tab, m) => m.type === 'SNAPSHOT' ? {ok:true,docId:'doc-1',snapshot} : {ok:true};
+    await localCommand(text);
+    assert.equal(fetches, 0, text);
+    assert(!tabCalls.some(c => ['SNAPSHOT','EXECUTE'].includes(c.message.type)), text);
+    assert.deepEqual(store.get('pending'), keepPending ? pending : undefined, text);
+    assert(announced().includes('Nie wpisuję haseł, kodów z SMS i BLIK ani innych danych poufnych. Wpisz je samodzielnie albo poproś o pomoc zaufaną osobę.'));
+    assert(!announced().some(t => /Tajne123|731904|1234|abcdef/.test(t)), text);
+  }
+  }
+});
 test('expired numbered choice never replans the reply or executes a stale selection', async () => {
   const requests=localAdapter();
   store.set('pending',{...actionPending({createdAt:Date.now()-61000}),kind:'choose_option',action:'click',text:'',needsConfirmation:false,options:[{id:'e1',name:'Usuń',role:'button'},{id:'e2',name:'Usuń',role:'button'}]});

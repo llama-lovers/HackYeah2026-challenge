@@ -12,6 +12,10 @@ test('captcha action requests and captcha-labelled targets are recognised after 
   for(const label of ['Nie jestem robotem','reCAPTCHA','not a robot','kapcza']) assert.equal(s.isCaptchaLabel?.(label),true,label);
   assert.equal(s.isCaptchaLabel('Znajdź'),false);
 });
+test('secret content stays local across Polish changes, SMS descriptions and assignments', () => {
+  for (const text of ['ustaw hasło Tajne123', 'zmień PIN na 1234', 'wpisz kod z wiadomości SMS 731904', 'hasło: Tajne123', 'hasło abcdef', 'mój PIN 1234', 'oto kod z otrzymanej wiadomości SMS: 731904', 'czy hasło Tajne123 jest poprawne']) assert.deepEqual(s.parseIntent(text), {kind:'secret_request'}, text);
+  for (const text of ['gdzie jest pole hasła', 'gdzie zmienić hasło', 'jak ustawić PIN', 'kliknij Zmień hasło', 'otwórz ustawienia hasła', 'co to jest kod z wiadomości SMS']) assert.deepEqual(s.parseIntent(text), {kind:'other'}, text);
+});
 test('tracking intent is anchored and retains the number', () => {
   for (const text of ['Sprawdź status przesyłki numer 12345678.', 'status paczki 12345678', 'śledź przesyłkę 12345678']) assert.deepEqual(s.parseIntent?.(text), { kind: 'track_parcel', rest: '12345678' });
   assert.deepEqual(s.parseIntent('sprawdź status przesyłki'), { kind: 'track_parcel', rest: '' });

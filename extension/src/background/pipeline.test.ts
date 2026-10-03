@@ -833,3 +833,61 @@ test('shorter verbosity never removes a refusal or a recovery next step', async 
   await localCommand('co mogę zrobić?');
   assert.deepEqual(announced(), ['Nie udało się sprawdzić, co można tu zrobić. Spróbuj jeszcze raz za chwilę.']);
 });
+// Voice scrolling (ACT-03): a typed, document-bound request; the spoken result comes from the page's measurement.
+const scrollRequests = () => tabCalls.filter(c => c.message.type === 'SCROLL').map(c => c.message);
+function scrollAdapter(reply: (m: any) => unknown) {
+  replayAdapter();
+  const base = tabHandler;
+  tabHandler = (tab, m) => m.type === 'SCROLL' ? reply(m) : base(tab, m);
+}
+const moved = (over: object = {}) => ({ ok: true, docId: 'doc-1', outcome: 'moved', before: 0, after: 480, max: 2400, ...over });
+test('scroll phrases send one SCROLL request bound to turn, tab, document and frame 0, with no model or snapshot work', async () => {
+  scrollAdapter(() => moved());
+  const id = crypto.randomUUID(); store.set('turn', { phase: 'processing', tabId: 7, startedAt: Date.now(), id });
+  await pipeline.runCommand(id, 7, 'Przewiń w dół.');
+  assert.deepEqual(scrollRequests(), [{ type: 'SCROLL', direction: 'down', turnId: id, tabId: 7, docId: 'doc-1', frameId: 0 }]);
+  assert.equal(tabCalls.find(c => c.message.type === 'SCROLL')!.tabId, 7);
+  assert.deepEqual(announced(), ['Przewinąłem w dół.']); untouched();
+});
+test('every direction is spoken from the measured outcome and boundaries are never claimed as movement', async () => {
+  const cases: [string, any, string][] = [
+    ['przewiń w dół', moved({ after: 2400, before: 2000 }), 'Przewinąłem w dół. To koniec strony.'],
+    ['w górę', moved({ before: 500, after: 20 }), 'Przewinąłem w górę.'],
+    ['w górę', moved({ before: 400, after: 0 }), 'Przewinąłem w górę. To początek strony.'],
+    ['na górę', moved({ before: 900, after: 0 }), 'Wróciłem na początek strony.'],
+    ['przewiń w dół', moved({ outcome: 'boundary', before: 2400, after: 2400 }), 'Jesteś na końcu strony. Powiedz „przewiń w górę”, żeby wrócić wyżej.'],
+    ['przewiń w górę', moved({ outcome: 'boundary', before: 0, after: 0 }), 'Jesteś na początku strony. Powiedz „przewiń w dół”, żeby czytać dalej.'],
+    ['na górę', moved({ outcome: 'boundary', before: 0, after: 0 }), 'Jesteś na początku strony. Powiedz „przewiń w dół”, żeby czytać dalej.'],
+    ['przewiń w dół', moved({ outcome: 'unsupported', before: 0, after: 0, max: 0 }), 'Nie mogę przewinąć tej strony. Jej treść może być w osobnym polu przewijania. Zapytaj, co tu jest.'],
+  ];
+  for (const [phrase, reply, expected] of cases) { scrollAdapter(() => reply); tabCalls.length = 0; await localCommand(phrase); assert.deepEqual(announced(), [expected], phrase); untouched(); }
+});
+test('forged, mismatched, failed and stale scroll replies never claim movement', async () => {
+  for (const [reply, expected] of [
+    [moved({ docId: 'doc-OTHER' }), 'Nie udało się przewinąć strony. Spróbuj jeszcze raz.'],
+    [moved({ outcome: 'teleported' }), 'Nie udało się przewinąć strony. Spróbuj jeszcze raz.'],
+    [moved({ after: -5 }), 'Nie udało się przewinąć strony. Spróbuj jeszcze raz.'],
+    [{ ok: false, reason: 'invalid' }, 'Nie udało się przewinąć strony. Spróbuj jeszcze raz.'],
+    [{ ok: false, reason: 'stale' }, 'Strona zmieniła się w trakcie. Powiedz polecenie jeszcze raz.'],
+    [undefined, 'Nie udało się przewinąć strony. Spróbuj jeszcze raz.'],
+  ] as const) { scrollAdapter(() => reply); tabCalls.length = 0; await localCommand('przewiń w dół'); assert.deepEqual(announced(), [expected], JSON.stringify(reply)); }
+  scrollAdapter(() => { throw new Error('no receiver'); }); tabCalls.length = 0; await localCommand('przewiń w dół');
+  assert.deepEqual(announced(), ['Nie udało się przewinąć strony. Spróbuj jeszcze raz.']);
+  replayAdapter(); tabHandler = () => { throw new Error('no receiver'); }; tabCalls.length = 0; await localCommand('na górę');
+  assert.deepEqual(spoken, ['Nie udało się przewinąć strony. Spróbuj jeszcze raz.']);
+});
+test('a scroll for a replaced turn speaks nothing and the result never replaces the replay buffer', async () => {
+  scrollAdapter(() => { store.set('turn', { phase: 'recording', tabId: 7, startedAt: Date.now(), id: 'replacement' }); return moved(); });
+  tabCalls.length = 0; await localCommand('przewiń w dół');
+  assert.deepEqual(announced(), []);
+  scrollAdapter(() => moved()); await pipeline.announce(7, SUMMARY_TEXT);
+  await localCommand('przewiń w dół'); await localCommand('na górę');
+  assert.equal(replayStored().text, SUMMARY_TEXT);
+  tabCalls.length = 0; await localCommand('powtórz'); assert.deepEqual(announced(), [SUMMARY_TEXT]);
+});
+test('scroll words inside ordinary utterances stay on the validated action route', async () => {
+  scrollAdapter(() => moved());
+  g.fetch = async (url: string, init: RequestInit) => { exploreCalls.push({ url: String(url), body: JSON.parse(String(init.body)) }); return { ok: true, json: async () => ({ action: 'none', target: '', text: '', needs_confirmation: false, say: 'Nie rozumiem polecenia.' }) }; };
+  tabCalls.length = 0; await localCommand('kliknij przewiń w dół');
+  assert.equal(scrollRequests().length, 0); assert.equal(exploreCalls.length, 1); assert(exploreCalls[0]!.url.endsWith('/api/action'));
+});

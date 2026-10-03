@@ -7,6 +7,9 @@ import type { ToContent } from '../shared/protocol.ts';
 import { isParcelDigits } from '../shared/parcel.ts';
 import { waitForParcelStatus } from './tracking.ts';
 import { projectCandidates, recheckCandidates } from './candidates.ts';
+import { scrollDocument } from './scroll.ts';
+import { decodeScrollRequest } from '../shared/protocol.ts';
+import { SCROLL_PRE } from '../shared/messages.pl.ts';
 const globals = globalThis as typeof globalThis & { __voiceAgentInitialized?: boolean };
 if (!globals.__voiceAgentInitialized) {
   globals.__voiceAgentInitialized = true;
@@ -42,6 +45,17 @@ if (!globals.__voiceAgentInitialized) {
         try { const candidates = recheckCandidates(message.epoch, ids); respond(candidates ? { ok: true, candidates } : { ok: false, reason: 'stale' }); }
         catch { respond({ ok: false, reason: 'stale' }); }
         break;
+      }
+      case 'SCROLL': {
+        // Only the worker (no tab sender) may ask, only for the top-level document it named, and a reload in between makes the request stale.
+        const request = decodeScrollRequest(message);
+        if (!request || sender.tab !== undefined || window !== window.top) { respond({ ok: false, reason: 'invalid' }); break; }
+        if (request.docId !== getDocumentId()) { respond({ ok: false, reason: 'stale' }); break; }
+        void (async () => {
+          await announcer.announce(SCROLL_PRE);
+          return scrollDocument(request.direction, { docId: request.docId, currentDocId: getDocumentId });
+        })().then(respond, () => respond({ ok: false, reason: 'stale' }));
+        return true;
       }
       case 'EXECUTE':
         // A proposal made against another document instance (reload, SPA hard navigation) must not act here.

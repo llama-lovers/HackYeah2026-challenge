@@ -1,15 +1,21 @@
 import { foldPolish } from './polish-speech.ts';
-import type { Verbosity } from './protocol.ts';
+import type { Verbosity, ScrollDirection } from './protocol.ts';
 
 // Local conversation commands: matched as COMPLETE normalized phrases, never as substrings, so ordinary dictation that merely
 // contains one of these words ("wpisz powtórz w pole ...") stays on the validated action route.
 export type VerbosityDirection = 'shorter' | 'longer';
-export type ConversationCommand = { kind: 'repeat' } | { kind: 'verbosity'; direction: VerbosityDirection };
+export type ConversationCommand = { kind: 'repeat' } | { kind: 'verbosity'; direction: VerbosityDirection } | { kind: 'scroll'; direction: ScrollDirection };
 
 const REPEAT_PHRASES = new Set(['powtorz', 'powtorz to', 'powtorz prosze', 'prosze powtorz', 'powtorz to prosze', 'powtorz jeszcze raz', 'powiedz jeszcze raz', 'powiedz to jeszcze raz', 'co powiedziales', 'co mowiles']);
 
 const SHORTER_PHRASES = new Set(['krocej', 'mow krocej', 'mow troche krocej', 'odpowiadaj krocej', 'krocej prosze', 'prosze krocej', 'krotsze odpowiedzi']);
 const LONGER_PHRASES = new Set(['dokladniej', 'mow dokladniej', 'mow troche dokladniej', 'odpowiadaj dokladniej', 'dokladniej prosze', 'prosze dokladniej', 'bardziej szczegolowo', 'mow bardziej szczegolowo', 'dokladniejsze odpowiedzi']);
+
+const SCROLL_PHRASES: Record<ScrollDirection, Set<string>> = {
+  down: new Set(['przewin', 'przewin w dol', 'przewin strone', 'przewin strone w dol', 'przewin nizej', 'przewin strone nizej', 'w dol', 'nizej']),
+  up: new Set(['przewin w gore', 'przewin strone w gore', 'przewin wyzej', 'przewin strone wyzej', 'w gore', 'wyzej']),
+  top: new Set(['na gore', 'na gore strony', 'na poczatek', 'na poczatek strony', 'przewin na gore', 'przewin na gore strony', 'przewin na poczatek', 'przewin na poczatek strony', 'wroc na gore', 'wroc na poczatek', 'idz na gore', 'idz na poczatek']),
+};
 
 // Case, diacritics, punctuation and spacing are normalized; nothing else is.
 export function normalizePhrase(text: string): string {
@@ -20,6 +26,7 @@ export function parseConversationCommand(text: string): ConversationCommand | nu
   if (REPEAT_PHRASES.has(s)) return { kind: 'repeat' };
   if (SHORTER_PHRASES.has(s)) return { kind: 'verbosity', direction: 'shorter' };
   if (LONGER_PHRASES.has(s)) return { kind: 'verbosity', direction: 'longer' };
+  for (const direction of ['down', 'up', 'top'] as const) if (SCROLL_PHRASES[direction].has(s)) return { kind: 'scroll', direction };
   return null;
 }
 

@@ -21,6 +21,7 @@ const localStorageDump = ctx => ctx.swEval('chrome.storage.local.get(null)');
 export async function run(ctx) {
   try {
     await replayScenario(ctx);
+    await scrollScenario(ctx);
     await verbosityScenario(ctx);
   } finally {
     // The browser is shared with later scenarios: leave no preference behind.
@@ -194,4 +195,79 @@ async function verbosityScenario(ctx) {
   await ctx.waitIdle();
   const requests = await ctx.upstreamSince(afterRestart);
   expectLevel(requests, 'concise', 'actions');
+}
+
+// ACT-03: measured, truthful document scrolling that never moves focus and never calls the model.
+async function scrollScenario(ctx) {
+  await watchSent(ctx);
+  const page = await ctx.openPage('/fixtures/tracking-form.html');
+  await page.evaluate("(() => { const tall = document.createElement('div'); tall.style.cssText = 'height:4000px'; tall.textContent = 'Długa strona'; document.body.append(tall); document.querySelector('#ShipmentNumber').focus(); })()");
+  const state = () => page.evaluate('({ y: Math.round(scrollY), h: innerHeight, max: Math.round(document.scrollingElement.scrollHeight - innerHeight), focus: document.activeElement.id })');
+  const mark = await ctx.upstreamMark();
+  await resetSent(ctx);
+  const say = async (phrase, expected) => {
+    await ctx.speak(page, phrase);
+    try { await ctx.waitForLive(page, expected); } catch (error) { throw new Error(`${error.message} after "${phrase}"; log tail: ${JSON.stringify((await ctx.liveLog(page)).slice(-6))}; state ${JSON.stringify(await state())}`); }
+    await ctx.waitIdle(); return state();
+  };
+  const step = h => Math.round(h * 0.8);
+  let now = await state();
+  assert.deepEqual([now.y, now.focus], [0, 'ShipmentNumber']);
+  assert(now.max > now.h * 2, 'tall enough to need several steps');
+  // Down moves about 0.8 viewport per command; the pre-announcement comes before the measured result.
+  now = await say('przewiń w dół', 'Przewinąłem w dół.');
+  assert(Math.abs(now.y - step(now.h)) <= 2, `down moved to ${now.y}`);
+  const log = await ctx.liveLog(page);
+  assert(log.indexOf('Przewijam.') >= 0 && log.indexOf('Przewijam.') < log.indexOf('Przewinąłem w dół.'));
+  assert.equal(now.focus, 'ShipmentNumber', 'focus is unchanged');
+  now = await say('w dół.', log => log.filter(s => s === 'Przewinąłem w dół.').length >= 1);
+  assert(Math.abs(now.y - 2 * step(now.h)) <= 4);
+  // Up goes back by the same amount, clamping at the top.
+  now = await say('przewiń w górę', log => log.includes('Przewinąłem w górę.'));
+  assert(Math.abs(now.y - step(now.h)) <= 4);
+  now = await say('wyżej', 'Przewinąłem w górę. To początek strony.');
+  assert.equal(now.y, 0);
+  // At the top an upward request is a boundary, not movement.
+  now = await say('przewiń w górę', 'Jesteś na początku strony. Powiedz „przewiń w dół”, żeby czytać dalej.');
+  assert.equal(now.y, 0);
+  now = await say('na górę', 'Jesteś na początku strony. Powiedz „przewiń w dół”, żeby czytać dalej.');
+  assert.equal(now.y, 0);
+  // Down to the bottom, a boundary there, then back to the top in one command.
+  for (let i = 0; i < 12 && (await state()).y < now.max - 1; i++) now = await say('przewiń', log => log.some(s => s.startsWith('Przewinąłem w dół.')));
+  now = await state();
+  assert(Math.abs(now.y - now.max) <= 1, `the document end was reached (${now.y} of ${now.max})`);
+  now = await say('przewiń w dół', 'Jesteś na końcu strony. Powiedz „przewiń w górę”, żeby wrócić wyżej.');
+  assert(Math.abs(now.y - now.max) <= 1);
+  now = await say('na początek strony', 'Wróciłem na początek strony.');
+  assert.equal(now.y, 0); assert.equal(now.focus, 'ShipmentNumber');
+  assert.equal(await ctx.upstreamMark(), mark, 'scrolling never calls the proxy');
+  assert.deepEqual((await sentTypes(ctx)).filter(type => !['PING', 'ANNOUNCE', 'SCROLL'].includes(type)), [], 'no snapshot, execute or settle work');
+  assert(!(await ctx.swEval("chrome.storage.session.get('pendingEffect')")).pendingEffect);
+  // A short page and a page whose content lives in a nested scroller cannot move: said honestly with a next step, and nothing moves.
+  const UNSUPPORTED = 'Nie mogę przewinąć tej strony. Jej treść może być w osobnym polu przewijania. Zapytaj, co tu jest.';
+  const FIT = "(() => { const style = document.createElement('style'); style.textContent = 'html{height:100%;overflow:hidden}body{height:100%;margin:0;overflow:hidden}'; document.head.append(style); })()";
+  const expectLive = async (target, expected, what) => {
+    try { await ctx.waitForLive(target, expected); } catch (error) { throw new Error(`${error.message} (${what}); log: ${JSON.stringify((await ctx.liveLog(target)).slice(-6))}`); }
+    await ctx.waitIdle();
+  };
+  const flat = await ctx.openPage('/fixtures/tracking-form.html');
+  await flat.evaluate(FIT);
+  assert.equal(await flat.evaluate('document.scrollingElement.scrollHeight <= innerHeight'), true, 'the document fits the viewport');
+  await ctx.speak(flat, 'przewiń w dół'); await expectLive(flat, UNSUPPORTED, 'flat page');
+  assert.equal(await flat.evaluate('Math.round(scrollY)'), 0);
+  const nested = await ctx.openPage('/fixtures/tracking-form.html');
+  await nested.evaluate(FIT);
+  await nested.evaluate("(() => { const box = document.createElement('div'); box.id = 'inner'; box.style.cssText = 'height:200px;overflow:auto'; const tall = document.createElement('div'); tall.style.height = '3000px'; box.append(tall); document.body.append(box); })()");
+  await ctx.speak(nested, 'przewiń w dół'); await expectLive(nested, UNSUPPORTED, 'nested scroller');
+  assert.deepEqual(await nested.evaluate("({ y: Math.round(scrollY), inner: document.querySelector('#inner').scrollTop })"), { y: 0, inner: 0 });
+  assert.equal(await ctx.upstreamMark(), mark);
+  // Complete-phrase routing: a scroll word inside an ordinary utterance reaches the action route and moves nothing.
+  const routed = await ctx.upstreamMark();
+  await resetSent(ctx);
+  await ctx.client.send('Page.bringToFront', {}, page.sessionId);
+  await ctx.speak(page, 'kliknij przewiń w dół'); await expectLive(page, 'Nie widzę takiego elementu.', 'dictation routing');
+  assert.equal(await page.evaluate('Math.round(scrollY)'), 0);
+  assert.deepEqual((await ctx.upstreamSince(routed)).map(schemaName), ['action_proposal']);
+  assert(!(await sentTypes(ctx)).includes('SCROLL'));
+  await ctx.swEval('chrome.tabs.sendMessage = globalThis.__origSend; true');
 }

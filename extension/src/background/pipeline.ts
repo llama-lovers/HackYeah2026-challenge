@@ -1,4 +1,4 @@
-import { SESSION_KEYS, VERBOSITY_KEY, PENDING_EFFECT_MAX_AGE_MS } from '../shared/protocol.ts';
+import { SESSION_KEYS, VERBOSITY_KEY, PENDING_EFFECT_MAX_AGE_MS, decodeScrollResult } from '../shared/protocol.ts';
 import type { PingResult, FromOffscreen, SnapshotResult, CandidatesResult, ExecuteResult, ExecutedAction, EffectResponse, PendingEffectJob, SettleDiffResult, ReadStatusResult } from '../shared/protocol.ts';
 import type { PageDiff, Snapshot } from '../shared/snapshot-format.ts';
 import { parseIntent, isCaptchaLabel } from '../shared/intent.ts';
@@ -16,6 +16,7 @@ import type { TurnState } from '../shared/turn.ts';
 import { maskText } from '../shared/mask.ts';
 import { parseConversationCommand, savesForReplay, makeReplay, decodeReplay, decodeAnnounceAck, decodeStoredVerbosity, moveVerbosity } from '../shared/conversation.ts';
 import type { OutputIntent, VerbosityDirection } from '../shared/conversation.ts';
+import type { ScrollDirection } from '../shared/protocol.ts';
 import type { Verbosity } from '../shared/protocol.ts';
 import { parseExploreCommand, decodeSummary, decodeActions, decodeRecheck, ACTION_CAPS } from '../shared/exploration.ts';
 import { toModelText, spokenName } from '../shared/snapshot-format.ts';
@@ -247,6 +248,24 @@ async function parcelReadback(run: CommandRun, digits: string): Promise<void> {
     await say(msg.parcelReadback(digitsToSpokenGroups(digits)));
   } catch { await say(msg.SNAPSHOT_FAILED); }
 }
+// The id of the document currently in frame 0 of the tab, or undefined when no receiver answers.
+async function pageDocId(tabId: number): Promise<string | undefined> {
+  try { const reply = await chrome.tabs.sendMessage(tabId, { type: 'PING' }, { frameId: 0 }) as PingResult | undefined; return typeof reply?.docId === 'string' && reply.docId ? reply.docId : undefined; } catch { return undefined; }
+}
+// "przewiń w dół/w górę/na górę": a typed request bound to this turn, tab, document and frame 0. The page measures what happened; the answer is
+// spoken from that measurement. No snapshot, model call or page action is involved, and the reply is a status that does not replace a replay.
+async function runScroll(run: CommandRun, direction: ScrollDirection): Promise<void> {
+  const { turnId, tabId } = run;
+  const say = async (text: string) => { if (await ownsTurn(turnId)) await announce(tabId, text, 'status'); };
+  const docId = await pageDocId(tabId);
+  if (!docId) { await say(msg.SCROLL_FAILED); return; }
+  let reply: unknown;
+  try { reply = await chrome.tabs.sendMessage(tabId, { type: 'SCROLL', direction, turnId, tabId, docId, frameId: 0 }, { frameId: 0 }); } catch { await say(msg.SCROLL_FAILED); return; }
+  const result = decodeScrollResult(reply, docId);
+  if (!result) { await say(msg.SCROLL_FAILED); return; }
+  if (!result.ok) { await say(result.reason === 'stale' ? msg.SCROLL_CHANGED : msg.SCROLL_FAILED); return; }
+  await say(msg.scrollSpeech(direction, result));
+}
 // "powtórz": replays the exact text of the last substantive message delivered in THIS tab and document. It reads one session entry and the
 // document id; it never takes a snapshot, calls the proxy or touches the page, and the replay itself is not stored as a new response.
 async function runRepeat(run: CommandRun): Promise<void> {
@@ -255,8 +274,7 @@ async function runRepeat(run: CommandRun): Promise<void> {
   let stored: unknown;
   try { stored = (await chrome.storage.session.get(SESSION_KEYS.lastResponse))[SESSION_KEYS.lastResponse]; } catch { stored = undefined; }
   const entry = decodeReplay(stored);
-  let docId: string | undefined;
-  try { const reply = await chrome.tabs.sendMessage(tabId, { type: 'PING' }, { frameId: 0 }) as PingResult | undefined; docId = typeof reply?.docId === 'string' ? reply.docId : undefined; } catch { docId = undefined; }
+  const docId = await pageDocId(tabId);
   if (entry && docId !== undefined && entry.tabId === tabId && entry.docId === docId) { await say(entry.text, 'replay'); return; }
   // Another document or tab, or damaged data: the buffer is dead weight and must not be offered again.
   if (stored !== undefined && docId !== undefined && (!entry || entry.tabId === tabId)) { try { await chrome.storage.session.remove(SESSION_KEYS.lastResponse); } catch { /* best effort */ } }
@@ -334,7 +352,7 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
   const command = parseConversationCommand(text);
   if (command) {
     if (tabId === undefined) { await say(msg.SNAPSHOT_FAILED, 'status'); return; }
-    return command.kind === 'repeat' ? runRepeat(run) : runVerbosity(run, command.direction);
+    return command.kind === 'repeat' ? runRepeat(run) : command.kind === 'verbosity' ? runVerbosity(run, command.direction) : runScroll(run, command.direction);
   }
   const pending = await claimPending(turnId);
   if (pending && pending.tabId === tabId) {

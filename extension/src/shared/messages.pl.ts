@@ -1,6 +1,6 @@
 import type { RejectReason, ConfirmCategory } from './validate.ts';
 import { truncate, collapse } from './snapshot-format.ts';
-import type { ParcelStatus, ExecutedAction, ExplorationCandidate, Verbosity } from './protocol.ts';
+import type { ParcelStatus, ExecutedAction, ExplorationCandidate, Verbosity, ScrollDirection, ScrollOutcome } from './protocol.ts';
 import type { PageDiff } from './snapshot-format.ts';
 import { isEmptyDiff } from './diff.ts';
 import { STATUS_SPOKEN_MAX } from './limits.ts';
@@ -121,3 +121,15 @@ export const VERBOSITY_SPOKEN: Record<Verbosity, string> = { concise: 'Odpowiada
 export const VERBOSITY_AT_SHORTEST = 'Już odpowiadam najkrócej. Powiedz „dokładniej”, żebym dodał szczegółów.';
 export const VERBOSITY_AT_LONGEST = 'Już odpowiadam najdokładniej. Powiedz „krócej”, żebym skrócił odpowiedzi.';
 export const VERBOSITY_NOT_SAVED = 'Nie udało się zapisać ustawienia, więc zostaje poprzedni poziom szczegółowości. Spróbuj jeszcze raz.';
+export const SCROLL_PRE = 'Przewijam.';
+export const SCROLL_FAILED = 'Nie udało się przewinąć strony. Spróbuj jeszcze raz.';
+export const SCROLL_CHANGED = 'Strona zmieniła się w trakcie. Powiedz polecenie jeszcze raz.';
+export const SCROLL_UNSUPPORTED = 'Nie mogę przewinąć tej strony. Jej treść może być w osobnym polu przewijania. Zapytaj, co tu jest.';
+// Spoken from the page's own measurement: movement is claimed only when the position really changed.
+export function scrollSpeech(direction: ScrollDirection, r: { outcome: ScrollOutcome; after: number; max: number }): string {
+  if (r.outcome === 'unsupported') return SCROLL_UNSUPPORTED;
+  if (r.outcome === 'boundary') return direction === 'down' ? 'Jesteś na końcu strony. Powiedz „przewiń w górę”, żeby wrócić wyżej.' : 'Jesteś na początku strony. Powiedz „przewiń w dół”, żeby czytać dalej.';
+  if (direction === 'top') return 'Wróciłem na początek strony.';
+  if (direction === 'down') return 'Przewinąłem w dół.' + (r.after >= r.max - 1 ? ' To koniec strony.' : '');
+  return 'Przewinąłem w górę.' + (r.after <= 0 ? ' To początek strony.' : '');
+}

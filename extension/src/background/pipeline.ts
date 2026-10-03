@@ -131,7 +131,7 @@ async function dropJob(id: string): Promise<void> { if ((await getJob())?.id ===
 async function ownsTurn(turnId: string): Promise<boolean> { return !turnSignal(turnId).aborted && (await getTurn()).id === turnId; }
 export async function getPending(): Promise<PendingInteraction | undefined> { return (await chrome.storage.session.get(SESSION_KEYS.pending))[SESSION_KEYS.pending] as PendingInteraction | undefined; }
 export function setPending(turnId: string, pending: PendingInteraction): Promise<void> { return runSerial(async () => { if (await ownsTurn(turnId)) await chrome.storage.session.set({ [SESSION_KEYS.pending]: pending }); }); }
-export function claimPending(): Promise<PendingInteraction | undefined> { return runSerial(async () => { const p = await getPending(); await chrome.storage.session.remove(SESSION_KEYS.pending); return p; }); }
+export function claimPending(turnId: string): Promise<PendingInteraction | undefined> { return runSerial(async () => { if (!(await ownsTurn(turnId))) return undefined; const p = await getPending(); await chrome.storage.session.remove(SESSION_KEYS.pending); return p; }); }
 export type CommandRun = { turnId: string; tabId: number; signal: AbortSignal; budget: StepBudget };
 type ProposalStep = { proposal: Proposal; epoch: number; docId: string; preSnapshot: Snapshot; announce: 'model' | 'none' | 'local'; confirmed?: boolean; context?: string; category?: ConfirmCategory };
 export async function performProposal(run: CommandRun, step: ProposalStep): Promise<'done' | 'handoff' | 'stopped'> {
@@ -205,7 +205,7 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
   const say = async (text: string) => { if (await ownsTurn(turnId)) await announce(tabId, text); };
   const text = rawText.trim();
   if (!text) { await say(msg.NOTHING_HEARD); return; }
-  const pending = await claimPending();
+  const pending = await claimPending(turnId);
   const intent = parseIntent(text);
   if (pending && pending.tabId === tabId) {
     const reply = routeReply(pending, text, Date.now());

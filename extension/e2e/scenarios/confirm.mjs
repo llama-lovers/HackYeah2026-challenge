@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
+import { waitFor } from '../cdp.mjs';
 export const name = 'confirm';
 export const timeoutMs = 60000;
 export async function run(ctx) {
-  const page = await ctx.openPage('/fixtures/sensitive.html');
+  let page = await ctx.openPage('/fixtures/sensitive.html');
   const mark = await ctx.upstreamMark();
   await ctx.speak(page, 'kliknij Zapłać');
   await ctx.waitForLive(page, 'Chcę kliknąć „Zapłać”. Potwierdzasz? Powiedz tak albo nie.');
@@ -20,4 +21,37 @@ export async function run(ctx) {
   assert.equal(await page.evaluate('window.__payCount'), 1);
   assert.deepEqual(await ctx.upstreamSince(replyMark), []);
   assert.equal(await ctx.swEval("chrome.storage.session.get('pending').then(s => s.pending ?? null)"), null);
+  await ctx.speak(page, 'tak');
+  await ctx.waitForLive(page, 'Nie ma nic do potwierdzenia.'); await ctx.waitIdle();
+  assert.equal(await page.evaluate('window.__payCount'), 1);
+  assert.deepEqual(await ctx.upstreamSince(replyMark), []);
+  const prompt = async () => {
+    page = await ctx.openPage('/fixtures/sensitive.html');
+    await ctx.speak(page, 'kliknij Zapłać');
+    await ctx.waitForLive(page, 'Chcę kliknąć „Zapłać”. Potwierdzasz? Powiedz tak albo nie.'); await ctx.waitIdle();
+    return ctx.upstreamMark();
+  };
+  const finish = async replyMark => {
+    await ctx.waitIdle();
+    assert.notEqual(await page.evaluate('window.__paid'), true);
+    assert.deepEqual(await ctx.upstreamSince(replyMark), []);
+    assert.equal(await ctx.swEval("chrome.storage.session.get(['pending','pendingEffect']).then(s => Object.keys(s).length)"), 0);
+  };
+  let afterPrompt = await prompt();
+  await ctx.speak(page, 'cokolwiek');
+  await ctx.waitForLive(page, 'Powiedz tak albo nie.'); await ctx.waitIdle();
+  await ctx.speak(page, 'cokolwiek'); await ctx.waitForLive(page, 'Anulowałem.'); await finish(afterPrompt);
+  afterPrompt = await prompt();
+  await ctx.client.send('Page.reload', {}, page.sessionId);
+  await waitFor(() => page.evaluate("!!document.getElementById('voice-agent-live-region')"), { label: 'reloaded content initialization' });
+  await ctx.speak(page, 'tak');
+  await ctx.waitForLive(page, 'Nie znalazłem tego elementu na stronie. Powiedz polecenie jeszcze raz.'); await finish(afterPrompt);
+  afterPrompt = await prompt();
+  await ctx.swEval("chrome.storage.session.get('pending').then(s => chrome.storage.session.set({pending:{...s.pending,createdAt:Date.now()-61000}}))");
+  await ctx.speak(page, 'tak');
+  await ctx.waitForLive(page, 'Minął czas na odpowiedź. Powiedz polecenie jeszcze raz.'); await finish(afterPrompt);
+  afterPrompt = await prompt();
+  await page.evaluate("document.querySelector('button[type=submit]').textContent='Usuń konto'");
+  await ctx.speak(page, 'tak');
+  await ctx.waitForLive(page, 'Nie znalazłem tego elementu na stronie. Powiedz polecenie jeszcze raz.'); await finish(afterPrompt);
 }

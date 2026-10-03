@@ -314,7 +314,7 @@ test('confirmed action uses exactly the stored proposal document and epoch with 
   const requests = localAdapter(); const p = actionPending(); store.set('pending', p);
   tabHandler = (_tab, m) => m.type === 'EXECUTE' ? { ok: true, kind: 'click', name: 'Zapłać', role: 'button', diff: { ...emptyDiff, added: ['Zapłacono'] } } : { ok: true };
   await localCommand('tak');
-  const executions = tabCalls.filter(c => c.message.type === 'EXECUTE'); assert.equal(executions.length, 1);
+  const executions = tabCalls.filter(c => c.message.type === 'EXECUTE'); assert.equal(executions.length, 1); assert(executions[0]);
   assert.deepEqual(executions[0].message.proposal, p.proposal);
   assert.equal(executions[0].message.epoch, p.epoch); assert.equal(executions[0].message.docId, p.docId);
   assert.equal(executions[0].message.confirmed, true);

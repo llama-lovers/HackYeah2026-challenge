@@ -18,7 +18,9 @@ if (!globals.__voiceAgentInitialized) {
         catch { respond({ ok: false, error: 'snapshot_failed' }); }
         break;
       case 'EXECUTE':
-        void execute(message.epoch, message.proposal, announcer).then(respond).catch(() => respond({ ok: false, reason: 'not_found' }));
+        void execute(message.epoch, message.proposal, announcer, async () => {
+          try { return ((await chrome.runtime.sendMessage({ type: 'EXECUTING', turnId: message.turnId, jobId: message.jobId })) as { ok?: boolean } | undefined)?.ok === true; } catch { return false; }
+        }).then(respond).catch(() => respond({ ok: false, reason: 'not_found' }));
         return true;
       case 'SETTLE_DIFF':
         void (async () => {

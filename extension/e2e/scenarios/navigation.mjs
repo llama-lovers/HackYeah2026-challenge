@@ -22,7 +22,7 @@ export async function run(ctx) {
   assert.equal((await ctx.liveLog(page)).filter(s => s.startsWith('Zmiana na stronie')).length, 1);
   // The READY replay on an expired job is silent and leaves no job or processing turn.
   const staleMark = await ctx.upstreamMark();
-  await ctx.swEval(`(() => chrome.tabs.query({active:true,lastFocusedWindow:true}).then(([tab]) => chrome.storage.session.set({turn:{phase:'processing',tabId:tab.id,startedAt:Date.now(),id:'stale-job'},pendingEffect:{id:crypto.randomUUID(),turnId:'stale-job',tabId:tab.id,action:{kind:'click',name:'Szukaj',role:'link'},preSnapshot:{epoch:1,path:'/fixtures/tracking-form.html',title:'Tracking',nodes:[],truncated:false},startedAt:Date.now()-20000}})))()`);
+  await ctx.swEval(`(() => chrome.tabs.query({active:true,lastFocusedWindow:true}).then(([tab]) => chrome.storage.session.set({turn:{phase:'processing',tabId:tab.id,startedAt:Date.now(),id:'stale-job'},pendingEffect:{id:crypto.randomUUID(),turnId:'stale-job',state:'executed',tabId:tab.id,action:{kind:'click',name:'Szukaj',role:'link'},preSnapshot:{epoch:1,path:'/fixtures/tracking-form.html',title:'Tracking',nodes:[],truncated:false},startedAt:Date.now()-20000}})))()`);
   await ctx.client.send('Page.reload', {}, page.sessionId);
   await new Promise(resolve => setTimeout(resolve, 3000));
   assert(!(await ctx.liveLog(page)).some(s => s.startsWith('Zmiana na stronie')));

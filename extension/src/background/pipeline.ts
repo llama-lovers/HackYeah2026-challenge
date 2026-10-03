@@ -118,10 +118,13 @@ async function onOffscreen(message: FromOffscreen): Promise<(() => Promise<void>
       };
   }
 }
+const JOB = SESSION_KEYS.pendingEffect;
+async function getJob(): Promise<PendingEffectJob | undefined> { return (await chrome.storage.session.get(JOB))[JOB] as PendingEffectJob | undefined; }
+async function dropJob(id: string): Promise<void> { if ((await getJob())?.id === id) await chrome.storage.session.remove(JOB); }
+async function ownsTurn(turnId: string): Promise<boolean> { return !turnSignal(turnId).aborted && (await getTurn()).id === turnId; }
 export async function runCommand(turnId: string, tabId: number | undefined, rawText: string): Promise<'handoff' | void> {
   const signal = turnSignal(turnId);
-  const owns = async () => !signal.aborted && (await getTurn()).id === turnId;
-  const say = async (text: string) => { if (await owns()) await announce(tabId, text); };
+  const say = async (text: string) => { if (await ownsTurn(turnId)) await announce(tabId, text); };
   const text = rawText.trim();
   if (!text) { await say(msg.NOTHING_HEARD); return; }
   let result: SnapshotResult;
@@ -130,44 +133,85 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
     result = await chrome.tabs.sendMessage(tabId, { type: 'SNAPSHOT' }, { frameId: 0 });
     if (!result.ok) throw new Error('snapshot_failed');
   } catch { await say(msg.SNAPSHOT_FAILED); return; }
-  if (!(await owns())) return;
+  if (!(await ownsTurn(turnId))) return;
   let proposal: Proposal;
   try {
     const utterance = Array.from(maskText(text)).slice(0, 500).join('');
     proposal = await postJson('/api/action', { utterance, snapshot: toModelText(result.snapshot) }, 20000, signal);
   } catch (error) { await say(error instanceof EgressBlockedError ? msg.SNAPSHOT_FAILED : msg.ASSISTANT_FAILED); return; }
-  if (!(await owns())) return;
+  if (!(await ownsTurn(turnId))) return;
+  // The job is only a proposal until the page confirms (EXECUTING) that it is about to perform the side effect.
+  let jobId = '';
   if (proposal.action === 'click' || proposal.action === 'fill') {
     const node = result.snapshot.nodes.find(n => n.id === proposal.target);
-    const job: PendingEffectJob = { id: crypto.randomUUID(), turnId, tabId: tabId!, action: { kind: proposal.action, name: node ? spokenName(node) : '', role: node?.role ?? '' }, preSnapshot: result.snapshot, startedAt: Date.now() };
-    await chrome.storage.session.set({ [SESSION_KEYS.pendingEffect]: job });
+    const job: PendingEffectJob = { id: crypto.randomUUID(), turnId, tabId: tabId!, state: 'proposed', action: { kind: proposal.action, name: node ? spokenName(node) : '', role: node?.role ?? '' }, preSnapshot: result.snapshot, startedAt: Date.now() };
+    jobId = job.id;
+    await chrome.storage.session.set({ [JOB]: job });
   }
   let executed: ExecuteResult;
-  try { executed = await chrome.tabs.sendMessage(tabId!, { type: 'EXECUTE', epoch: result.snapshot.epoch, proposal }, { frameId: 0 }); }
-  catch { return 'handoff'; }
-  if (!(await owns())) return;
-  await chrome.storage.session.remove(SESSION_KEYS.pendingEffect);
+  try { executed = await chrome.tabs.sendMessage(tabId!, { type: 'EXECUTE', epoch: result.snapshot.epoch, proposal, turnId, jobId }, { frameId: 0 }); }
+  catch {
+    // Only an action the page proved it started can be followed by a navigation; any other delivery failure ends the turn locally.
+    const job = await getJob();
+    if (jobId && job?.id === jobId && job.state !== 'proposed') return 'handoff';
+    if (jobId) await dropJob(jobId);
+    await say(msg.ACTION_FAILED);
+    return;
+  }
+  if (jobId) await dropJob(jobId);
+  if (!(await ownsTurn(turnId))) return;
   if (!executed.ok) await say(msg.rejectionText(executed.reason));
   else if (executed.kind === 'none') await say(msg.noneSay(proposal.say));
   else await announceEffect(tabId!, { kind: executed.kind, name: executed.name, role: executed.role }, executed.diff ?? { added: [], removed: [], changed: [], alerts: [] }, signal);
 }
-// Serialize READY consumers so duplicate document notifications cannot claim one job twice.
-let readyQueue: Promise<void> = Promise.resolve();
-export async function handleReady(tabId: number): Promise<void> {
-  const work = readyQueue.then(async () => {
-    const job = (await chrome.storage.session.get(SESSION_KEYS.pendingEffect))[SESSION_KEYS.pendingEffect] as PendingEffectJob | undefined;
-    if (!job || job.tabId !== tabId) return;
-    await chrome.storage.session.remove(SESSION_KEYS.pendingEffect);
-    if ((await getTurn()).id !== job.turnId) return;
-    const resetOwnedTurn = () => runSerial(() => resetTurnIf(job.turnId));
-    if (Date.now() - job.startedAt > PENDING_EFFECT_MAX_AGE_MS) { await resetOwnedTurn(); return; }
-    try {
-      const result: SettleDiffResult = await chrome.tabs.sendMessage(tabId, { type: 'SETTLE_DIFF', preSnapshot: job.preSnapshot }, { frameId: 0 });
-      if (!result.ok) throw new Error('snapshot_failed');
-      await announceEffect(tabId, job.action, result.diff);
-    } catch { await announce(tabId, msg.effectFallback(job.action.kind, job.action.name)); }
-    finally { await resetOwnedTurn(); }
+// The content script calls this right before it performs a click/fill; only after the acknowledgement does it act.
+export function handleExecuting(tabId: number | undefined, message: { turnId: string; jobId: string }): Promise<boolean> {
+  return runSerial(async () => {
+    const [turn, job] = [await getTurn(), await getJob()];
+    if (!job || job.id !== message.jobId || job.turnId !== message.turnId || job.tabId !== tabId || job.state !== 'proposed' || turn.id !== message.turnId || turn.phase !== 'processing') return false;
+    await chrome.storage.session.set({ [JOB]: { ...job, state: 'executed', startedAt: Date.now() } });
+    // The deadline does not depend on a READY ever arriving (the destination may be outside the extension's pages).
+    setTimeout(() => { void expireJob(job.id); }, PENDING_EFFECT_MAX_AGE_MS);
+    return true;
   });
-  readyQueue = work.catch(() => {});
-  await work;
+}
+export function expireJob(jobId: string): Promise<void> {
+  return runSerial(async () => {
+    const job = await getJob();
+    if (!job || job.id !== jobId || job.state !== 'executed') return;
+    await chrome.storage.session.remove(JOB);
+    if ((await getTurn()).id !== job.turnId) return;
+    await announce(job.tabId, msg.EFFECT_UNKNOWN);
+    await resetTurnIf(job.turnId);
+  });
+}
+export function handleTabRemoved(tabId: number): Promise<void> {
+  return runSerial(async () => {
+    const [turn, job] = [await getTurn(), await getJob()];
+    if (job?.tabId === tabId) await chrome.storage.session.remove(JOB);
+    if (turn.phase !== 'idle' && turn.tabId === tabId) { abortTurn(turn.id); await resetTurnIf(turn.id); }
+  });
+}
+export async function handleReady(tabId: number): Promise<void> {
+  const job = await runSerial(async () => {
+    const job = await getJob();
+    if (!job || job.tabId !== tabId || job.state === 'claimed') return undefined;
+    // A new document before the page confirmed the action: nothing was done, so there is nothing to describe.
+    if (job.state === 'proposed' || (await getTurn()).id !== job.turnId) { await chrome.storage.session.remove(JOB); return undefined; }
+    if (Date.now() - job.startedAt > PENDING_EFFECT_MAX_AGE_MS) {
+      await chrome.storage.session.remove(JOB);
+      await announce(tabId, msg.EFFECT_UNKNOWN); await resetTurnIf(job.turnId);
+      return undefined;
+    }
+    await chrome.storage.session.set({ [JOB]: { ...job, state: 'claimed' } });
+    return job;
+  });
+  if (!job) return;
+  try {
+    const result: SettleDiffResult = await chrome.tabs.sendMessage(tabId, { type: 'SETTLE_DIFF', preSnapshot: job.preSnapshot }, { frameId: 0 });
+    if (!result.ok) throw new Error('snapshot_failed');
+    if (!(await ownsTurn(job.turnId))) return;
+    await announceEffect(tabId, job.action, result.diff, turnSignal(job.turnId));
+  } catch { if (await ownsTurn(job.turnId)) await announce(tabId, msg.effectFallback(job.action.kind, job.action.name)); }
+  finally { await runSerial(async () => { await resetTurnIf(job.turnId); await dropJob(job.id); }); }
 }

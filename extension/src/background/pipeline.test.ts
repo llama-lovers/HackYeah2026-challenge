@@ -1,4 +1,4 @@
-import test, { beforeEach } from 'node:test';
+import test, { beforeEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 // Minimal chrome adapter: just enough for the background pipeline's state machine.
 type Handler = (tabId: number, message: any) => unknown;
@@ -89,4 +89,91 @@ test('stale recovery aborts the in-flight model request of the abandoned turn (C
   assert.equal(replacement.tabId, 22); assert.equal(replacement.phase, 'recording');
   assert.equal(tabCalls.filter(c => c.message.type === 'EXECUTE').length, 0);
   assert.equal(spoken.length, 0);
+});
+
+// Drives one full turn up to the model proposal; returns the turn id.
+const button = { id: 'e1', kind: 'interactive', role: 'button', name: 'Znajdź', state: {} };
+const withProposal = (proposal: object, effect = 'Kliknąłem Znajdź. Status: w drodze.') => {
+  g.fetch = async (url: string) => ({ ok: true, json: async () => String(url).endsWith('/api/effect') ? { say: effect } : proposal });
+};
+const clickProposal = { action: 'click', target: 'e1', text: '', needs_confirmation: false, say: '' };
+const announced = () => tabCalls.filter(c => c.message.type === 'ANNOUNCE').map(c => c.message.text as string);
+async function startTurn(onExecute: (tabId: number, message: any) => unknown) {
+  tabHandler = (tabId, m) => m.type === 'SNAPSHOT' ? { ok: true, snapshot: { ...snapshot, nodes: [button] } } : m.type === 'EXECUTE' ? onExecute(tabId, m) : m.type === 'SETTLE_DIFF' ? { ok: true, diff: { added: ['Status: w drodze'], removed: [], changed: [], alerts: [] } } : { ok: true };
+  await pipeline.handleToggle({ id: 7 } as chrome.tabs.Tab);
+  const state = await turn();
+  await pipeline.handleToggle({ id: 7 } as chrome.tabs.Tab);
+  return state.id as string;
+}
+const job = () => (store.get('pendingEffect') as any);
+test('delivery failure before execution neither claims a job nor asserts a click (CR-07)', async () => {
+  withProposal(clickProposal);
+  const id = await startTurn(() => { throw new Error('no receiver'); });
+  await pipeline.handleOffscreenMessage(message(id, { type: 'TRANSCRIPT', text: 'kliknij Znajdź' }));
+  await pipeline.handleReady(7);
+  assert.equal(job(), undefined);
+  assert.equal((await turn()).phase, 'idle');
+  assert(announced().includes('Nie udało się wykonać tej akcji. Spróbuj jeszcze raz.'));
+  assert(!announced().some(t => t.startsWith('Kliknąłem')));
+});
+test('a reload during the announcement delay is not reported as a click (CR-07)', async () => {
+  withProposal(clickProposal);
+  const id = await startTurn(async tabId => { await pipeline.handleReady(tabId); throw new Error('port closed'); });
+  await pipeline.handleOffscreenMessage(message(id, { type: 'TRANSCRIPT', text: 'kliknij Znajdź' }));
+  assert(!announced().some(t => t.startsWith('Kliknąłem') || t.startsWith('Wykonałem')));
+  assert.equal(job(), undefined); assert.equal((await turn()).phase, 'idle');
+  assert(!tabCalls.some(c => c.message.type === 'SETTLE_DIFF'));
+});
+test('an executed navigation is handed off and described on the next document (CR-07)', async () => {
+  withProposal(clickProposal);
+  const id = await startTurn(async tabId => { assert.equal(await pipeline.handleExecuting(tabId, { turnId: id, jobId: job().id }), true); throw new Error('port closed'); });
+  await pipeline.handleOffscreenMessage(message(id, { type: 'TRANSCRIPT', text: 'kliknij Znajdź' }));
+  assert.equal(job().state, 'executed'); assert.equal((await turn()).phase, 'processing');
+  await pipeline.handleReady(7);
+  assert(announced().includes('Kliknąłem Znajdź. Status: w drodze.'));
+  assert.equal(job(), undefined); assert.equal((await turn()).phase, 'idle');
+});
+test('the page cannot confirm an action for another turn, tab or job (CR-07)', async () => {
+  withProposal(clickProposal);
+  let probes: boolean[] = [];
+  const id = await startTurn(async tabId => {
+    const j = job();
+    probes = [await pipeline.handleExecuting(tabId + 1, { turnId: id, jobId: j.id }), await pipeline.handleExecuting(tabId, { turnId: 'other', jobId: j.id }), await pipeline.handleExecuting(tabId, { turnId: id, jobId: 'other' })];
+    return { ok: false, reason: 'unconfirmed' };
+  });
+  await pipeline.handleOffscreenMessage(message(id, { type: 'TRANSCRIPT', text: 'kliknij Znajdź' }));
+  assert.deepEqual(probes, [false, false, false]);
+  assert(announced().includes('Nie udało się wykonać tej akcji. Spróbuj jeszcze raz.'));
+});
+test('an executed job that never gets a READY expires with an explicit uncertainty announcement (CR-08)', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    withProposal(clickProposal);
+    const id = await startTurn(async tabId => { await pipeline.handleExecuting(tabId, { turnId: id, jobId: job().id }); throw new Error('port closed'); });
+    await pipeline.handleOffscreenMessage(message(id, { type: 'TRANSCRIPT', text: 'kliknij Znajdź' }));
+    assert.equal((await turn()).phase, 'processing');
+    mock.timers.tick(15000);
+    await pipeline.runSerial(async () => {});
+    assert.equal(job(), undefined); assert.equal((await turn()).phase, 'idle');
+    assert(announced().some(t => t.startsWith('Wykonałem polecenie, ale nie mogę potwierdzić')));
+  } finally { mock.timers.reset(); }
+});
+test('closing the owning tab removes the job and releases the turn (CR-08)', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    withProposal(clickProposal);
+    const id = await startTurn(async tabId => { await pipeline.handleExecuting(tabId, { turnId: id, jobId: job().id }); throw new Error('port closed'); });
+    await pipeline.handleOffscreenMessage(message(id, { type: 'TRANSCRIPT', text: 'kliknij Znajdź' }));
+    await pipeline.handleTabRemoved(7);
+    assert.equal(job(), undefined); assert.equal((await turn()).phase, 'idle');
+    mock.timers.tick(15000); await pipeline.runSerial(async () => {});
+    assert(!announced().some(t => t.startsWith('Wykonałem')));
+  } finally { mock.timers.reset(); }
+});
+test('a none proposal fails locally and releases the turn without any job (CR-08)', async () => {
+  withProposal({ action: 'none', target: '', text: '', needs_confirmation: false, say: 'Nie rozumiem.' });
+  const id = await startTurn(() => ({ ok: true, kind: 'none' }));
+  await pipeline.handleOffscreenMessage(message(id, { type: 'TRANSCRIPT', text: 'abc' }));
+  assert.equal(job(), undefined); assert.equal((await turn()).phase, 'idle');
+  assert(announced().includes('Nie rozumiem.'));
 });

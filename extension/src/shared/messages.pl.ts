@@ -17,6 +17,8 @@ export const STT_FAILED = 'Nie udało się rozpoznać mowy. Spróbuj jeszcze raz
 export const ASSISTANT_FAILED = 'Nie udało się połączyć z asystentem. Spróbuj jeszcze raz za chwilę.';
 export const SNAPSHOT_FAILED = 'Nie mogę bezpiecznie odczytać tej strony.';
 export const NONE_FALLBACK = 'Nie rozumiem polecenia. Powiedz je inaczej.';
+export const ACTION_FAILED = 'Nie udało się wykonać tej akcji. Spróbuj jeszcze raz.';
+export const EFFECT_UNKNOWN = 'Wykonałem polecenie, ale nie mogę potwierdzić, co się zmieniło na stronie.';
 export const NEEDS_CONFIRMATION = 'Tej akcji nie wykonam bez potwierdzenia.';
 export function clickPre(name: string): string { return `Klikam ${name}.`; }
 export function fillPre(name: string): string { return `Wpisuję w pole ${name}.`; }
@@ -34,6 +36,7 @@ const REJECTIONS: Record<RejectReason, string> = {
   unknown_action: 'Nie umiem jeszcze tego zrobić.',
   needs_confirmation: NEEDS_CONFIRMATION,
   irreversible: NEEDS_CONFIRMATION,
+  unconfirmed: ACTION_FAILED,
 };
 export function rejectionText(reason: RejectReason): string { return REJECTIONS[reason]; }
 export function noneSay(say: string): string { return truncate(say, 300) || NONE_FALLBACK; }

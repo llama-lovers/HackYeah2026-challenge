@@ -11,7 +11,7 @@ test('announces validated actions and unchanged effects in exact Polish', () => 
   assert.equal(m.effectFallback('fill', 'Numer'), 'Wpisałem tekst w pole Numer. Strona się zmieniła, ale nie udało mi się jej opisać.');
 });
 test('every rejection is spoken and unsafe actions require confirmation', () => {
-  const reasons: RejectReason[] = ['unknown_action', 'not_found', 'stale', 'hidden', 'disabled', 'role_mismatch', 'sensitive_fill', 'empty_text', 'too_long', 'needs_confirmation', 'irreversible'];
+  const reasons: RejectReason[] = ['unknown_action', 'not_found', 'stale', 'hidden', 'disabled', 'role_mismatch', 'sensitive_fill', 'empty_text', 'too_long', 'needs_confirmation', 'irreversible', 'unconfirmed'];
   for (const reason of reasons) assert.match(m.rejectionText(reason), /.+\.$/u);
   for (const reason of ['needs_confirmation', 'irreversible'] as const) assert.equal(m.rejectionText(reason), 'Tej akcji nie wykonam bez potwierdzenia.');
 });

@@ -6,7 +6,7 @@ import type { Proposal } from '../shared/validate.ts';
 import type { ExecuteResult } from '../shared/protocol.ts';
 import { spokenName } from '../shared/snapshot-format.ts';
 import { clickPre, fillPre } from '../shared/messages.pl.ts';
-export async function execute(epoch: number, proposal: Proposal, announcer: { host: HTMLElement; announce(text: string): void | Promise<void> }): Promise<ExecuteResult> {
+export async function execute(epoch: number, proposal: Proposal, announcer: { host: HTMLElement; announce(text: string): void | Promise<void> }, commit: () => Promise<boolean> = async () => true): Promise<ExecuteResult> {
   let resolved = ['click', 'fill'].includes(proposal.action) ? resolveTarget(proposal.target, epoch) : { target: null, element: null, node: null };
   const verdict = validateProposal(proposal, resolved.target);
   if (!verdict.ok) return verdict;
@@ -32,6 +32,11 @@ export async function execute(epoch: number, proposal: Proposal, announcer: { ho
     if (!focusVerdict.ok) return focusVerdict;
     if (afterFocus.element !== element || !(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) return { ok: false, reason: 'role_mismatch' };
   }
+  // The background must acknowledge that the side effect is about to happen before it happens; without the acknowledgement nothing is done.
+  if (!(await commit())) return { ok: false, reason: 'unconfirmed' };
+  const final = resolveTarget(proposal.target, epoch), finalVerdict = validateProposal(proposal, final.target);
+  if (!finalVerdict.ok) return finalVerdict;
+  if (final.element !== element) return { ok: false, reason: 'stale' };
   const settled = startSettleWatch({ ignore: el => announcer.host.contains(el) });
   if (verdict.kind === 'click') element.click();
   else {

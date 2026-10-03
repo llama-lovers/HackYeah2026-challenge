@@ -32,11 +32,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. In the DevTools Network tab, requests to the proxy carry only the simplified page snapshot: on a test login/payment page the password, PESEL, IBAN, card number, CVV and one-time-code values are masked, while on inpost.pl the parcel number is sent unmasked.
   5. The OpenRouter key exists only in the proxy's environment (not in the extension bundle or the repo); the proxy returns schema-valid action proposals from the pinned Claude model, rejects oversized requests, and never logs request or response bodies.
 
-**Plans**: 1/4 plans executed
+**Plans**: 2/4 plans executed
 Plans:
 **Wave 1**
 - [x] 01-01-PLAN.md — FastAPI proxy: /api/action and /api/effect (strict schema, pinned model), /api/transcribe seam + stub, Origin/Host/body-cap guards, body-free logging, fake OpenRouter upstream (wave 1)
-- [ ] 01-02-PLAN.md — Extension foundation: masked snapshot + model text, fail-closed validator, turn reducer, Polish messages, DOM walker, fixtures, fixed manifest key, CDP harness (wave 1)
+- [x] 01-02-PLAN.md — Extension foundation: masked snapshot + model text, fail-closed validator, turn reducer, Polish messages, DOM walker, fixtures, fixed manifest key, CDP harness (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 01-03-PLAN.md — Walking skeleton: shortcut → offscreen recording → transcribe → masked snapshot → model → validated click → "Klikam Znajdź." in the live region; options-page mic grant; WAV fallback; E2E runner (wave 2)
@@ -101,7 +101,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 (Phase 3 may start alongsid
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Voice-to-Effect Vertical Slice | 1/4 | In Progress|  |
+| 1. Voice-to-Effect Vertical Slice | 2/4 | In Progress|  |
 | 2. Safe InPost Parcel Tracking | 0/TBD | Not started | - |
 | 3. Page Exploration & Conversation | 0/TBD | Not started | - |
 | 4. Audio Control & Accessible Settings | 0/TBD | Not started | - |

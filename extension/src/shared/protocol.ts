@@ -1,14 +1,14 @@
-import type { Proposal, RejectReason } from './validate.ts';
+import type { Proposal, RejectReason, ConfirmCategory } from './validate.ts';
 import type { Snapshot, PageDiff } from './snapshot-format.ts';
 export const LIVE_REGION_ID = 'voice-agent-live-region';
 export const COMMAND_TOGGLE = 'toggle-listening';
 export const SESSION_KEYS = { turn: 'turn', pendingEffect: 'pendingEffect', pending: 'pending' } as const;
 export const PENDING_EFFECT_MAX_AGE_MS = 15000;
-export type ToContent = { type: 'PING' } | { type: 'SNAPSHOT' } | { type: 'EXECUTE'; epoch: number; proposal: Proposal; turnId: string; jobId: string; docId: string } | { type: 'ANNOUNCE'; text: string } | { type: 'SETTLE_DIFF'; preSnapshot: Snapshot } | { type: 'READ_STATUS'; number: string };
+export type ToContent = { type: 'PING' } | { type: 'SNAPSHOT' } | { type: 'EXECUTE'; epoch: number; proposal: Proposal; turnId: string; jobId: string; docId: string; confirmed?: boolean } | { type: 'ANNOUNCE'; text: string } | { type: 'SETTLE_DIFF'; preSnapshot: Snapshot } | { type: 'READ_STATUS'; number: string };
 export type ParcelStatus = { kind: 'status' | 'error'; title: string; description: string };
 export type ReadStatusResult = { ok: true; status: ParcelStatus } | { ok: false; error: 'not_found' | 'invalid_number' };
 export type SnapshotResult = { ok: true; snapshot: Snapshot; docId: string } | { ok: false; error: 'snapshot_failed' };
-export type ExecuteResult = { ok: true; kind: 'click' | 'fill'; name: string; role: string; diff?: PageDiff } | { ok: true; kind: 'none' } | { ok: false; reason: RejectReason };
+export type ExecuteResult = { ok: true; kind: 'click' | 'fill'; name: string; role: string; diff?: PageDiff } | { ok: true; kind: 'none' } | { ok: false; reason: RejectReason; confirm?: { name: string; role: string; category: ConfirmCategory } };
 export type SettleDiffResult = { ok: true; diff: PageDiff } | { ok: false; error: 'snapshot_failed' };
 export type FromContent = { type: 'READY' } | { type: 'EXECUTING'; turnId: string; jobId: string };
 // Every recording command and offscreen event carries the immutable id of the turn that owns it, so late events can be ignored.

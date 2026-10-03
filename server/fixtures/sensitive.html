@@ -12,5 +12,5 @@
 <button type="submit">Zapłać</button></form>
 <p>Twój PESEL: 44051401359. Konto: PL61 1090 1014 0000 0712 1981 2874. Karta 4111111111111111.</p>
 <p>Przesyłka 123456789012345678901234 w drodze.</p></main>
-<script>document.querySelector('form').addEventListener('submit', e => { e.preventDefault(); window.__paid=true; const p=document.createElement('p'); p.textContent='Zapłacono'; document.body.append(p); });</script>
+<script>document.querySelector('form').addEventListener('submit', e => { e.preventDefault(); window.__paid=true; window.__payCount=(window.__payCount || 0)+1; const p=document.createElement('p'); p.textContent='Zapłacono'; document.body.append(p); });</script>
 </body></html>

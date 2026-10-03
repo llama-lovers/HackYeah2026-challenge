@@ -20,7 +20,10 @@ export async function run(ctx) {
   const sensitive = await ctx.openPage('/fixtures/sensitive.html');
   const mark = await ctx.upstreamMark();
   await ctx.speak(sensitive, 'kliknij Zapłać');
-  await ctx.waitForLive(sensitive, 'Tej akcji nie wykonam bez potwierdzenia.');
+  await ctx.waitForLive(sensitive, 'Chcę kliknąć „Zapłać”. Potwierdzasz? Powiedz tak albo nie.');
+  await ctx.waitIdle();
+  await ctx.speak(sensitive, 'nie');
+  await ctx.waitForLive(sensitive, 'Anulowałem.');
   await ctx.waitIdle();
   assert(!(await ctx.liveLog(sensitive)).includes('Klikam Zapłać.'));
   assert.notEqual(await sensitive.evaluate('window.__paid'), true);

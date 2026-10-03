@@ -1,4 +1,4 @@
-import type { RejectReason } from './validate.ts';
+import type { RejectReason, ConfirmCategory } from './validate.ts';
 import { truncate } from './snapshot-format.ts';
 import type { ParcelStatus, ExecutedAction } from './protocol.ts';
 import type { PageDiff } from './snapshot-format.ts';
@@ -50,7 +50,10 @@ export const SNAPSHOT_FAILED = 'Nie mogę bezpiecznie odczytać tej strony.';
 export const NONE_FALLBACK = 'Nie rozumiem polecenia. Powiedz je inaczej.';
 export const ACTION_FAILED = 'Nie udało się wykonać tej akcji. Spróbuj jeszcze raz.';
 export const EFFECT_UNKNOWN = 'Wykonałem polecenie, ale nie mogę potwierdzić, co się zmieniło na stronie.';
-export const NEEDS_CONFIRMATION = 'Tej akcji nie wykonam bez potwierdzenia.';
+export const NEEDS_CONFIRMATION = 'Tej akcji nie wykonam bez potwierdzenia. Powiedz polecenie jeszcze raz.';
+export function confirmPrompt(kind: 'click' | 'fill', name: string, category: ConfirmCategory, context?: string): string {
+  return (kind === 'click' ? `Chcę kliknąć „${name}”` : `Chcę wpisać tekst w pole „${name}”`) + (context ? ', ' + context : '') + '. Potwierdzasz? Powiedz tak albo nie.';
+}
 export function clickPre(name: string): string { return `Klikam ${name}.`; }
 export function fillPre(name: string): string { return `Wpisuję w pole ${name}.`; }
 export function noChange(kind: 'click' | 'fill', name: string): string { return `${kind === 'click' ? `Kliknąłem ${name}` : `Wpisałem tekst w pole ${name}`}, ale na stronie nic się nie zmieniło.`; }

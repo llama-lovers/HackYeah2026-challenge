@@ -4,7 +4,7 @@ export async function run(ctx) {
   const page = await ctx.openPage('/fixtures/sensitive.html');
   const mark = await ctx.upstreamMark();
   await ctx.speak(page, 'kliknij Zapłać');
-  await ctx.waitForLive(page, 'Tej akcji nie wykonam bez potwierdzenia.');
+  await ctx.waitForLive(page, 'Chcę kliknąć „Zapłać”. Potwierdzasz? Powiedz tak albo nie.');
   await ctx.waitIdle();
   const request = (await ctx.upstreamSince(mark)).find(r => r.response_format.json_schema.name === 'action_proposal');
   const content = request.messages.findLast(m => m.role === 'user').content;
@@ -19,4 +19,7 @@ export async function run(ctx) {
   assert.match(output, /POST \/api\/action -> 200/);
   assert.match(output, /POST \/api\/transcribe -> 200/);
   for (const secret of ['kliknij', 'Zapłać', '[ukryte]', 'page_snapshot', '44051401359', '?text=']) assert(!output.includes(secret), `body-free proxy output ${secret}`);
+  await ctx.speak(page, 'nie');
+  await ctx.waitForLive(page, 'Anulowałem.');
+  await ctx.waitIdle();
 }

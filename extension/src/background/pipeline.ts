@@ -133,7 +133,7 @@ export async function getPending(): Promise<PendingInteraction | undefined> { re
 export function setPending(turnId: string, pending: PendingInteraction): Promise<void> { return runSerial(async () => { if (await ownsTurn(turnId)) await chrome.storage.session.set({ [SESSION_KEYS.pending]: pending }); }); }
 export function claimPending(): Promise<PendingInteraction | undefined> { return runSerial(async () => { const p = await getPending(); await chrome.storage.session.remove(SESSION_KEYS.pending); return p; }); }
 export type CommandRun = { turnId: string; tabId: number; signal: AbortSignal; budget: StepBudget };
-type ProposalStep = { proposal: Proposal; epoch: number; docId: string; preSnapshot: Snapshot; announce: 'model' | 'none' | 'local' };
+type ProposalStep = { proposal: Proposal; epoch: number; docId: string; preSnapshot: Snapshot; announce: 'model' | 'none' | 'local'; confirmed?: boolean; context?: string };
 export async function performProposal(run: CommandRun, step: ProposalStep): Promise<'done' | 'handoff' | 'stopped'> {
   const { turnId, tabId, signal } = run, { proposal } = step;
   const say = async (text: string) => { if (await ownsTurn(turnId)) await announce(tabId, text); };
@@ -149,7 +149,7 @@ export async function performProposal(run: CommandRun, step: ProposalStep): Prom
   // Charge only click/fill messages actually sent; reads and announcements are free.
   if (['click', 'fill'].includes(proposal.action) && !takeStep(run.budget)) { if (jobId) await runSerial(() => dropJob(jobId)); await say(msg.STEP_LIMIT); return 'stopped'; }
   let executed: ExecuteResult;
-  try { executed = await chrome.tabs.sendMessage(tabId, { type: 'EXECUTE', epoch: step.epoch, proposal, turnId, jobId, docId: step.docId }, { frameId: 0 }); }
+  try { executed = await chrome.tabs.sendMessage(tabId, { type: 'EXECUTE', epoch: step.epoch, proposal, turnId, jobId, docId: step.docId, confirmed: step.confirmed }, { frameId: 0 }); }
   catch {
     const job = await getJob();
     if (jobId && job?.id === jobId && job.state !== 'proposed') return 'handoff';
@@ -158,7 +158,13 @@ export async function performProposal(run: CommandRun, step: ProposalStep): Prom
   }
   if (jobId) await runSerial(() => dropJob(jobId));
   if (!(await ownsTurn(turnId))) return 'stopped';
-  if (!executed.ok) { await say(msg.rejectionText(executed.reason)); return 'stopped'; }
+  if (!executed.ok) {
+    if (executed.confirm && step.confirmed !== true && (proposal.action === 'click' || proposal.action === 'fill')) {
+      await setPending(turnId, { kind: 'confirm_action', proposal, epoch: step.epoch, docId: step.docId, preSnapshot: step.preSnapshot, ...executed.confirm, context: step.context, id: crypto.randomUUID(), tabId, createdAt: Date.now(), reprompts: 0 });
+      await say(msg.confirmPrompt(proposal.action, executed.confirm.name, executed.confirm.category, step.context));
+    } else await say(msg.rejectionText(executed.reason));
+    return 'stopped';
+  }
   if (executed.kind === 'none') { await say(msg.noneSay(proposal.say)); return 'stopped'; }
   if (step.announce === 'model') await announceEffect(tabId, { kind: executed.kind, name: executed.name, role: executed.role }, executed.diff ?? { added: [], removed: [], changed: [], alerts: [] }, signal);
   else if (step.announce === 'local') await say(msg.localEffect({ kind: executed.kind, name: executed.name, role: executed.role }, executed.diff ?? { added: [], removed: [], changed: [], alerts: [] }));
@@ -204,6 +210,10 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
   if (pending && pending.tabId === tabId) {
     const reply = routeReply(pending, text, Date.now());
     if (reply.kind === 'confirm' && pending.kind === 'confirm_parcel') return runParcelSearch(run, pending.digits);
+    if (reply.kind === 'confirm' && pending.kind === 'confirm_action') {
+      const outcome = await performProposal(run, { proposal: pending.proposal, epoch: pending.epoch, docId: pending.docId, preSnapshot: pending.preSnapshot, announce: 'local', confirmed: true });
+      return outcome === 'handoff' ? 'handoff' : undefined;
+    }
     if (reply.kind === 'cancel') { await say(msg.CANCELLED); return; }
     if (reply.kind === 'reprompt') { await setPending(turnId, { ...pending, reprompts: pending.reprompts + 1 }); await say(msg.CONFIRM_REPROMPT); return; }
     if (reply.kind === 'number') return parcelReadback(run, reply.digits);

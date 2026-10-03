@@ -11,7 +11,7 @@ import { optionsFromIds, addContexts, duplicateOptions } from '../shared/choice.
 import type { PendingInteraction } from '../shared/pending.ts';
 import { isEmptyDiff } from '../shared/diff.ts';
 import type { Proposal, ConfirmCategory } from '../shared/validate.ts';
-import { onToggle, isStale } from '../shared/turn.ts';
+import { onToggle, isStale, toProcessing, waitDecision } from '../shared/turn.ts';
 import type { TurnState } from '../shared/turn.ts';
 import { maskText } from '../shared/mask.ts';
 import { parseConversationCommand, savesForReplay, makeReplay, decodeReplay, decodeAnnounceAck, decodeStoredVerbosity, moveVerbosity } from '../shared/conversation.ts';
@@ -27,7 +27,7 @@ export async function getTurn(): Promise<TurnState> {
   return (await chrome.storage.session.get(SESSION_KEYS.turn))[SESSION_KEYS.turn] as TurnState | undefined ?? { phase: 'idle', startedAt: Date.now() };
 }
 export async function setTurn(turn: TurnState): Promise<void> { await chrome.storage.session.set({ [SESSION_KEYS.turn]: turn }); }
-export async function resetTurn(): Promise<void> { await setTurn({ phase: 'idle', startedAt: Date.now() }); }
+export async function resetTurn(): Promise<void> { clearWaits(); await setTurn({ phase: 'idle', startedAt: Date.now() }); }
 export async function ensureOffscreen(): Promise<void> {
   if (creating) return creating;
   creating = (async () => {
@@ -96,15 +96,16 @@ async function dropReplayOf(tabId: number): Promise<void> {
 export async function getVerbosity(): Promise<Verbosity> {
   try { return decodeStoredVerbosity(await chrome.storage.local.get(VERBOSITY_KEY), VERBOSITY_KEY); } catch { return decodeStoredVerbosity(undefined, VERBOSITY_KEY); }
 }
-export async function announceEffect(tabId: number, action: ExecutedAction, diff: PageDiff, signal?: AbortSignal): Promise<void> {
-  if (isEmptyDiff(diff)) { await announce(tabId, msg.noChange(action.kind, action.name)); return; }
+export async function announceEffect(tabId: number, action: ExecutedAction, diff: PageDiff, signal?: AbortSignal, turnId?: string): Promise<void> {
+  const say = (text: string) => turnId === undefined ? announce(tabId, text) : speakTurn(turnId, tabId, text);
+  if (isEmptyDiff(diff)) { await say(msg.noChange(action.kind, action.name)); return; }
   let text: string;
   try {
     const reply = await postJson<EffectResponse>('/api/effect', { action, diff, verbosity: await getVerbosity() }, 12000, signal);
     text = speakable(reply.say).trim() || msg.effectFallback(action.kind, action.name);
   } catch { text = msg.effectFallback(action.kind, action.name); }
   if (signal?.aborted) return;
-  await announce(tabId, text);
+  await say(text);
 }
 // State-changing events (shortcut, offscreen notifications) run one at a time so read-modify-write of the turn cannot interleave.
 // Long work (model calls, page actions) is deliberately kept outside this queue so a new shortcut can still be answered with "busy".
@@ -121,7 +122,45 @@ function turnSignal(id: string): AbortSignal {
   if (!controller) { controller = new AbortController(); controllers.set(id, controller); }
   return controller.signal;
 }
-function abortTurn(id: string | undefined): void { if (id) { controllers.get(id)?.abort(); controllers.delete(id); } }
+function abortTurn(id: string | undefined): void { if (id) { controllers.get(id)?.abort(); controllers.delete(id); clearWaits(id); } }
+// First line of a turn's answer: the claim is serialized with the wait notice, so a notice that is due at the same moment as an answer is either
+// delivered strictly before the answer or suppressed, never after it. It also tells a stale caller (replaced, closed or aborted turn) to stay silent.
+async function claimOutput(turnId: string): Promise<boolean> {
+  const turn = await getTurn();
+  if (turnSignal(turnId).aborted || turn.id !== turnId) return false;
+  if (turn.phase === 'processing' && !turn.outputClaimed) await setTurn({ ...turn, outputClaimed: true });
+  return true;
+}
+export async function speakTurn(turnId: string, tabId: number | undefined, text: string, intent: OutputIntent = 'substantive'): Promise<void> {
+  if (!(await runSerial(() => claimOutput(turnId)))) return;
+  await announce(tabId, text, intent);
+}
+// One in-memory timer per processing turn. The deadline itself lives in session storage, so a worker that was killed re-arms from the stored
+// absolute time (rehydrateWait / any later event of the owning turn); the timer only decides when to look, the stored state decides whether to speak.
+const waitTimers = new Map<string, ReturnType<typeof setTimeout>>();
+function clearWaits(id?: string): void {
+  for (const [key, timer] of waitTimers) if (id === undefined || key === id) { clearTimeout(timer); waitTimers.delete(key); }
+}
+function armWait(turn: TurnState): void {
+  if (turn.phase !== 'processing' || !turn.id || turn.processingDeadline === undefined || turn.waitNotifiedAt !== undefined || turn.outputClaimed || waitTimers.has(turn.id)) return;
+  const id = turn.id;
+  waitTimers.set(id, setTimeout(() => { waitTimers.delete(id); void fireWait(id); }, Math.max(0, turn.processingDeadline - Date.now())));
+}
+export function fireWait(turnId: string): Promise<void> {
+  return runSerial(async () => {
+    const turn = await getTurn();
+    const decision = waitDecision(turn, turnId, Date.now());
+    if (decision.kind === 'wait') { armWait(turn); return; }
+    if (decision.kind === 'drop') return;
+    await setTurn({ ...turn, waitNotifiedAt: Date.now() });
+    // A routine status: spoken once, and never the target of "powtórz".
+    await announce(turn.tabId, msg.WAIT_NOTICE, 'status');
+  });
+}
+// Called when the worker starts: a processing turn that survived a worker restart keeps its original deadline.
+export function rehydrateWait(): Promise<void> { return runSerial(async () => { armWait(await getTurn()); }); }
+// Simulates the loss of everything in worker memory (a killed worker) for tests; stored state is untouched.
+export function forgetWorkerMemory(): void { clearWaits(); }
 export async function resetTurnIf(id: string | undefined): Promise<void> { if ((await getTurn()).id === id) await resetTurn(); }
 export function handleToggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promise<void> { return runSerial(() => toggle(tab, opts)); }
 async function toggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promise<void> {
@@ -139,7 +178,7 @@ async function toggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promi
     try { await ensureOffscreen(); await chrome.runtime.sendMessage({ target: 'offscreen', type: 'REC_START', turnId: next.id }); }
     catch { await announce(tab.id, msg.MIC_NO_DEVICE, 'status'); await resetTurnIf(next.id); }
   } else {
-    await setTurn(next);
+    await setTurn(next); armWait(next);
     try { await chrome.runtime.sendMessage({ target: 'offscreen', type: 'REC_STOP', turnId: state.id, ...(__E2E__ && state.stubText !== undefined ? { stubText: state.stubText } : {}) }); }
     catch { await announce(state.tabId, msg.STT_FAILED, 'status'); await resetTurnIf(state.id); }
   }
@@ -152,10 +191,15 @@ async function onOffscreen(message: FromOffscreen): Promise<(() => Promise<void>
   const turn = await getTurn();
   // Events of a turn that no longer owns the pipeline (recovered, replaced or finished) are dropped silently.
   if (turn.phase === 'idle' || !turn.id || message.turnId !== turn.id) return;
+  // Once the transcript is accepted the command owns the turn: a duplicated or late STT event must not start a second command or add an error.
+  if (turn.commandStarted && ['TRANSCRIPT', 'TRANSCRIBE_ERROR', 'MIC_ERROR'].includes(message.type)) return;
+  // After a worker restart the in-memory timer is gone; any event of the owning turn restores it from the stored deadline.
+  armWait(turn);
   switch (message.type) {
     case 'MIC_OPEN': await announce(turn.tabId, msg.LISTENING, 'status'); break;
     case 'REC_STOPPED':
-      if (turn.phase === 'recording') await setTurn({ ...turn, phase: 'processing', startedAt: Date.now() });
+      // Autonomous stop (recording cap): the deadline starts here, before STT finishes; a user stop already started it.
+      if (turn.phase === 'recording') { const next = toProcessing(turn, Date.now()); await setTurn(next); armWait(next); }
       await announce(turn.tabId, msg.PROCESSING, 'status'); break;
     case 'MIC_ERROR':
       await announce(turn.tabId, message.code === 'not_allowed' ? msg.MIC_DENIED : msg.MIC_NO_DEVICE, 'status');
@@ -163,6 +207,7 @@ async function onOffscreen(message: FromOffscreen): Promise<(() => Promise<void>
       await resetTurnIf(turn.id); break;
     case 'TRANSCRIBE_ERROR': await announce(turn.tabId, msg.STT_FAILED, 'status'); await resetTurnIf(turn.id); break;
     case 'TRANSCRIPT':
+      await setTurn({ ...turn, commandStarted: true });
       return async () => {
         let outcome: 'handoff' | void = undefined;
         try { outcome = await runCommand(turn.id!, turn.tabId, message.text); }
@@ -181,7 +226,7 @@ export type CommandRun = { turnId: string; tabId: number; signal: AbortSignal; b
 type ProposalStep = { proposal: Proposal; epoch: number; docId: string; preSnapshot: Snapshot; announce: 'model' | 'none' | 'local'; confirmed?: boolean; context?: string; category?: ConfirmCategory };
 export async function performProposal(run: CommandRun, step: ProposalStep): Promise<'done' | 'handoff' | 'stopped'> {
   const { turnId, tabId, signal } = run, { proposal } = step;
-  const say = async (text: string) => { if (await ownsTurn(turnId)) await announce(tabId, text); };
+  const say = (text: string) => speakTurn(turnId, tabId, text);
   if (!(await ownsTurn(turnId))) return 'stopped';
   if (proposal.action === 'click' || proposal.action === 'fill') {
     const node = step.preSnapshot.nodes.find(n => n.id === proposal.target);
@@ -215,12 +260,12 @@ export async function performProposal(run: CommandRun, step: ProposalStep): Prom
     return 'stopped';
   }
   if (executed.kind === 'none') { await say(msg.noneSay(proposal.say)); return 'stopped'; }
-  if (step.announce === 'model') await announceEffect(tabId, { kind: executed.kind, name: executed.name, role: executed.role }, executed.diff ?? { added: [], removed: [], changed: [], alerts: [] }, signal);
+  if (step.announce === 'model') await announceEffect(tabId, { kind: executed.kind, name: executed.name, role: executed.role }, executed.diff ?? { added: [], removed: [], changed: [], alerts: [] }, signal, turnId);
   else if (step.announce === 'local') await say(msg.localEffect({ kind: executed.kind, name: executed.name, role: executed.role }, executed.diff ?? { added: [], removed: [], changed: [], alerts: [] }, step.category));
   return 'done';
 }
 export async function runParcelSearch(run: CommandRun, digits: string): Promise<'handoff' | void> {
-  const say = async (text: string) => { if (await ownsTurn(run.turnId)) await announce(run.tabId, text); };
+  const say = (text: string) => speakTurn(run.turnId, run.tabId, text);
   try {
     let result: SnapshotResult = await chrome.tabs.sendMessage(run.tabId, { type: 'SNAPSHOT' }, { frameId: 0 });
     if (!result.ok) { await say(msg.SNAPSHOT_FAILED); return; }
@@ -239,7 +284,7 @@ export async function runParcelSearch(run: CommandRun, digits: string): Promise<
   } catch { await say(msg.STATUS_UNREAD); }
 }
 async function parcelReadback(run: CommandRun, digits: string): Promise<void> {
-  const say = async (text: string) => { if (await ownsTurn(run.turnId)) await announce(run.tabId, text); };
+  const say = (text: string) => speakTurn(run.turnId, run.tabId, text);
   try {
     const result: SnapshotResult = await chrome.tabs.sendMessage(run.tabId, { type: 'SNAPSHOT' }, { frameId: 0 });
     if (!result.ok) { await say(msg.SNAPSHOT_FAILED); return; }
@@ -256,7 +301,7 @@ async function pageDocId(tabId: number): Promise<string | undefined> {
 // spoken from that measurement. No snapshot, model call or page action is involved, and the reply is a status that does not replace a replay.
 async function runScroll(run: CommandRun, direction: ScrollDirection): Promise<void> {
   const { turnId, tabId } = run;
-  const say = async (text: string) => { if (await ownsTurn(turnId)) await announce(tabId, text, 'status'); };
+  const say = (text: string) => speakTurn(turnId, tabId, text, 'status');
   const docId = await pageDocId(tabId);
   if (!docId) { await say(msg.SCROLL_FAILED); return; }
   let reply: unknown;
@@ -270,7 +315,7 @@ async function runScroll(run: CommandRun, direction: ScrollDirection): Promise<v
 // document id; it never takes a snapshot, calls the proxy or touches the page, and the replay itself is not stored as a new response.
 async function runRepeat(run: CommandRun): Promise<void> {
   const { turnId, tabId } = run;
-  const say = async (text: string, intent: OutputIntent) => { if (await ownsTurn(turnId)) await announce(tabId, text, intent); };
+  const say = (text: string, intent: OutputIntent) => speakTurn(turnId, tabId, text, intent);
   let stored: unknown;
   try { stored = (await chrome.storage.session.get(SESSION_KEYS.lastResponse))[SESSION_KEYS.lastResponse]; } catch { stored = undefined; }
   const entry = decodeReplay(stored);
@@ -285,7 +330,7 @@ async function runRepeat(run: CommandRun): Promise<void> {
 // it must not replace the response that "powtórz" would repeat.
 async function runVerbosity(run: CommandRun, direction: VerbosityDirection): Promise<void> {
   const { turnId, tabId } = run;
-  const say = async (text: string) => { if (await ownsTurn(turnId)) await announce(tabId, text, 'status'); };
+  const say = (text: string) => speakTurn(turnId, tabId, text, 'status');
   const current = await getVerbosity();
   const next = moveVerbosity(current, direction);
   if (next === current) { await say(direction === 'shorter' ? msg.VERBOSITY_AT_SHORTEST : msg.VERBOSITY_AT_LONGEST); return; }
@@ -295,7 +340,7 @@ async function runVerbosity(run: CommandRun, direction: VerbosityDirection): Pro
 // Read-only exploration: it requests a snapshot and speaks; it never sends EXECUTE, /api/action or stores a pending interaction.
 async function runSummary(run: CommandRun): Promise<void> {
   const { turnId, tabId, signal } = run;
-  const say = async (text: string) => { if (await ownsTurn(turnId)) await announce(tabId, text); };
+  const say = (text: string) => speakTurn(turnId, tabId, text);
   let result: SnapshotResult;
   try {
     result = await chrome.tabs.sendMessage(tabId, { type: 'SNAPSHOT' }, { frameId: 0 });
@@ -314,7 +359,7 @@ async function runSummary(run: CommandRun): Promise<void> {
 // The suggested ids live in this function only: they are never sent to EXECUTE, stored as a pending interaction or reused by a later command.
 async function runActions(run: CommandRun): Promise<void> {
   const { turnId, tabId, signal } = run;
-  const say = async (text: string) => { if (await ownsTurn(turnId)) await announce(tabId, text); };
+  const say = (text: string) => speakTurn(turnId, tabId, text);
   let result: CandidatesResult;
   try {
     result = await chrome.tabs.sendMessage(tabId, { type: 'CANDIDATES' }, { frameId: 0 });
@@ -342,7 +387,7 @@ async function runActions(run: CommandRun): Promise<void> {
 export async function runCommand(turnId: string, tabId: number | undefined, rawText: string): Promise<'handoff' | void> {
   const signal = turnSignal(turnId);
   const run: CommandRun = { turnId, tabId: tabId!, signal, budget: createBudget() };
-  const say = async (text: string, intent: OutputIntent = 'substantive') => { if (await ownsTurn(turnId)) await announce(tabId, text, intent); };
+  const say = (text: string, intent: OutputIntent = 'substantive') => speakTurn(turnId, tabId, text, intent);
   const text = rawText.trim();
   if (!text) { await say(msg.NOTHING_HEARD, 'status'); return; }
   const intent = parseIntent(text);
@@ -453,6 +498,7 @@ export function handleTabRemoved(tabId: number): Promise<void> {
 }
 export async function handleReady(tabId: number): Promise<void> {
   const job = await runSerial(async () => {
+    armWait(await getTurn());
     // A new document in this tab: whatever it said before belongs to a page that no longer exists.
     await dropReplayOf(tabId);
     const job = await getJob();
@@ -472,8 +518,8 @@ export async function handleReady(tabId: number): Promise<void> {
     const result: SettleDiffResult = await chrome.tabs.sendMessage(tabId, { type: 'SETTLE_DIFF', preSnapshot: job.preSnapshot }, { frameId: 0 });
     if (!result.ok) throw new Error('snapshot_failed');
     if (!(await ownsTurn(job.turnId))) return;
-    if (job.effect === 'local') await announce(tabId, msg.localEffect(job.action, result.diff));
-    else await announceEffect(tabId, job.action, result.diff, turnSignal(job.turnId));
-  } catch { if (await ownsTurn(job.turnId)) await announce(tabId, msg.effectFallback(job.action.kind, job.action.name)); }
+    if (job.effect === 'local') await speakTurn(job.turnId, tabId, msg.localEffect(job.action, result.diff));
+    else await announceEffect(tabId, job.action, result.diff, turnSignal(job.turnId), job.turnId);
+  } catch { await speakTurn(job.turnId, tabId, msg.effectFallback(job.action.kind, job.action.name)); }
   finally { await runSerial(async () => { await resetTurnIf(job.turnId); await dropJob(job.id); }); }
 }

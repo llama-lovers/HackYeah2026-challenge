@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { matchesSince } from './live-log.mjs';
-import { launchChromium, connect, waitForTarget, attach, evaluate, openPage, waitFor, startProcess, EXT_DIR, SERVER_DIR } from './cdp.mjs';
+import { launchChromium, connect, waitForTarget, attach, evaluate, openPage, waitFor, startProcess, stopServiceWorker, wakeServiceWorker, EXT_DIR, SERVER_DIR } from './cdp.mjs';
 const requested = process.argv.slice(2);
 const scenarios = [];
 for (const file of (await readdir(join(EXT_DIR, 'e2e/scenarios'))).filter(f => f.endsWith('.mjs')).sort()) {
@@ -76,6 +76,12 @@ try {
         upstreamMark: async () => (await upstream()).length,
         upstreamSince: async mark => (await upstream()).slice(mark),
         proxyOutput: () => proxy.output(),
+        // Kills the service worker (all in-memory state is lost, session storage stays) and wakes it with an extension message.
+        async restartWorker() {
+          await stopServiceWorker(client, browser.port, extensionId);
+          const woken = await wakeServiceWorker(client, browser.port, extensionId);
+          session = await attach(client, woken.id);
+        },
         // Closes the browser and starts a new one on the SAME profile directory: durable extension storage survives, session storage does not.
         async restartBrowser() {
           client.close(); await browser.close();

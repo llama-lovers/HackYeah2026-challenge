@@ -891,3 +891,137 @@ test('scroll words inside ordinary utterances stay on the validated action route
   tabCalls.length = 0; await localCommand('kliknij przewiń w dół');
   assert.equal(scrollRequests().length, 0); assert.equal(exploreCalls.length, 1); assert(exploreCalls[0]!.url.endsWith('/api/action'));
 });
+
+// OUT-07: one absolute processing deadline, once-only, fenced by turn, tab and phase, never a repeat target.
+const WAIT = 'To trwa dłużej niż zwykle';
+const waits = () => announced().filter(t => t === WAIT).length;
+const flush = () => pipeline.runSerial(async () => {});
+const withClock = async (body: () => Promise<void>) => {
+  mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+  try { await body(); } finally { mock.timers.reset(); }
+};
+const navigationDiff = { added: ['Status: w drodze'], removed: [], changed: [], alerts: [] };
+const quickTurn = () => startTurn(() => ({ ok: true, kind: 'click', name: 'Znajdź', role: 'button', diff: navigationDiff }));
+test('a turn still processing at the deadline hears the notice once, and it is never the replay target', () => withClock(async () => {
+  withProposal(clickProposal);
+  const id = await quickTurn();
+  const base = tabHandler;
+  tabHandler = (tabId, m) => m.type === 'ANNOUNCE' || m.type === 'PING' ? { ok: true, docId: 'doc-1' } : base(tabId, m);
+  const stored = await turn();
+  assert.equal(stored.processingDeadline, 1_008_000);
+  mock.timers.tick(7999); await flush(); assert.equal(waits(), 0);
+  mock.timers.tick(1); await flush(); assert.equal(waits(), 1);
+  assert.equal((await turn()).waitNotifiedAt, 1_008_000);
+  // The slow STT result finally arrives: its substantive answer follows the notice.
+  await pipeline.handleOffscreenMessage(message(id, { type: 'TRANSCRIPT', text: 'kliknij Znajdź' }));
+  assert.deepEqual(announced(), [WAIT, 'Kliknąłem Znajdź. Status: w drodze.']);
+  assert.equal((store.get('lastResponse') as any).text, 'Kliknąłem Znajdź. Status: w drodze.');
+  mock.timers.tick(60000); await flush();
+  assert.equal(waits(), 1); assert.equal((await turn()).phase, 'idle');
+  tabCalls.length = 0; await localCommand('powtórz');
+  assert.deepEqual(announced(), ['Kliknąłem Znajdź. Status: w drodze.']);
+}));
+test('a fast turn never hears the notice and its timer is gone', () => withClock(async () => {
+  withProposal(clickProposal);
+  const id = await quickTurn();
+  mock.timers.tick(3000);
+  await pipeline.handleOffscreenMessage(message(id, { type: 'TRANSCRIPT', text: 'kliknij Znajdź' }));
+  mock.timers.tick(20000); await flush();
+  assert.equal(waits(), 0); assert.equal((await turn()).phase, 'idle');
+}));
+test('terminal output claimed just before the deadline suppresses the stale notice, and a due notice precedes a later answer', () => withClock(async () => {
+  withProposal(clickProposal);
+  let release!: () => void;
+  const id = await quickTurn();
+  const base = tabHandler;
+  tabHandler = (tabId, m) => m.type === 'ANNOUNCE' ? new Promise(resolve => { release = () => resolve({ ok: true, docId: 'doc-1' }); }) : base(tabId, m);
+  mock.timers.tick(7000);
+  const running = pipeline.speakTurn(id, 7, 'Odpowiedź.');
+  await flush();
+  mock.timers.tick(1000); await flush();
+  release(); await running;
+  assert.equal(waits(), 0, 'the claimed answer suppresses the notice');
+  assert.equal((await turn()).outputClaimed, true);
+}));
+test('a notice that is due while the answer is still being produced is delivered before it, never after', () => withClock(async () => {
+  withProposal(clickProposal);
+  const id = await quickTurn();
+  mock.timers.tick(8000);
+  const result = pipeline.handleOffscreenMessage(message(id, { type: 'TRANSCRIPT', text: 'kliknij Znajdź' }));
+  await result; await flush();
+  assert.deepEqual(announced(), [WAIT, 'Kliknąłem Znajdź. Status: w drodze.']);
+}));
+test('the deadline starts at the first processing transition: a model delay after a slow STT does not restart it', () => withClock(async () => {
+  withProposal(clickProposal);
+  let answer!: (value: unknown) => void;
+  g.fetch = async (url: string) => String(url).endsWith('/api/effect') ? { ok: true, json: async () => ({ say: 'Gotowe.' }) } : new Promise(resolve => { answer = value => resolve({ ok: true, json: async () => value }); });
+  const id = await quickTurn();
+  mock.timers.tick(5000); await flush();                   // slow STT
+  const work = pipeline.handleOffscreenMessage(message(id, { type: 'TRANSCRIPT', text: 'kliknij Znajdź' }));
+  await new Promise<void>(resolve => queueMicrotask(resolve));
+  mock.timers.tick(2999); await flush(); assert.equal(waits(), 0);
+  mock.timers.tick(1); await flush(); assert.equal(waits(), 1, 'due 8000 ms after the stop, not after the transcript');
+  answer(clickProposal); await work;
+  mock.timers.tick(30000); await flush(); assert.equal(waits(), 1);
+}));
+test('an autonomous recording stop starts the deadline before STT finishes', () => withClock(async () => {
+  store.set('turn', { phase: 'recording', tabId: 7, startedAt: Date.now(), id: 'auto' });
+  await pipeline.handleOffscreenMessage(message('auto', { type: 'REC_STOPPED' }));
+  assert.equal((await turn()).processingDeadline, 1_008_000);
+  mock.timers.tick(8000); await flush();
+  assert.deepEqual(announced(), ['Przetwarzam.', WAIT]);
+}));
+test('a worker that was killed and woken keeps the original deadline and the claimed flag', () => withClock(async () => {
+  withProposal(clickProposal);
+  await quickTurn();
+  mock.timers.tick(5000);
+  pipeline.forgetWorkerMemory(); mock.timers.tick(10000); await flush();   // the timer died with the worker: nothing is spoken
+  assert.equal(waits(), 0);
+  await store.set('turn', { ...(await turn()), startedAt: Date.now() });   // (the turn is not abandoned as stale in this scenario)
+  await pipeline.rehydrateWait(); mock.timers.tick(0); await flush();
+  assert.equal(waits(), 1, 'overdue deadline fires at once after the wake');
+  pipeline.forgetWorkerMemory(); await pipeline.rehydrateWait(); mock.timers.tick(100000); await flush();
+  assert.equal(waits(), 1, 'the stored claim survives another wake');
+}));
+test('remaining time is rehydrated, not restarted, after a worker wake', () => withClock(async () => {
+  withProposal(clickProposal);
+  await quickTurn();
+  mock.timers.tick(5000); pipeline.forgetWorkerMemory(); await pipeline.rehydrateWait();
+  mock.timers.tick(2999); await flush(); assert.equal(waits(), 0);
+  mock.timers.tick(1); await flush(); assert.equal(waits(), 1);
+}));
+test('tab closure, replacement and abandonment cancel the pending notice', () => withClock(async () => {
+  withProposal(clickProposal);
+  await quickTurn(); mock.timers.tick(3000);
+  await pipeline.handleTabRemoved(7);
+  mock.timers.tick(20000); await flush(); assert.equal(waits(), 0); assert.equal((await turn()).phase, 'idle');
+  await quickTurn(); mock.timers.tick(2000);
+  store.set('turn', { phase: 'recording', tabId: 22, startedAt: Date.now(), id: 'replacement' });   // a replacement owns the pipeline
+  mock.timers.tick(20000); await flush(); assert.equal(waits(), 0);
+  assert.equal((await turn()).id, 'replacement'); assert.equal((await turn()).waitNotifiedAt, undefined);
+}));
+test('duplicate and late STT events start one command and add no error', () => withClock(async () => {
+  withProposal(clickProposal);
+  const id = await quickTurn();
+  let proposals = 0;
+  const original = g.fetch;
+  g.fetch = async (url: string, init: unknown) => { if (String(url).endsWith('/api/action')) proposals++; return original(url, init); };
+  const text = message(id, { type: 'TRANSCRIPT', text: 'kliknij Znajdź' });
+  await Promise.all([pipeline.handleOffscreenMessage(text), pipeline.handleOffscreenMessage(text)]);
+  await pipeline.handleOffscreenMessage(message(id, { type: 'TRANSCRIBE_ERROR', code: 'network' }));
+  await pipeline.handleOffscreenMessage(text);
+  assert.equal(proposals, 1);
+  assert.deepEqual(announced(), ['Kliknąłem Znajdź. Status: w drodze.']);
+  assert.equal((await turn()).phase, 'idle');
+}));
+test('a notice fired while a navigation effect is handed off stays single and the effect follows on the new document', () => withClock(async () => {
+  withProposal(clickProposal);
+  const id = await startTurn(async tabId => { assert.equal(await pipeline.handleExecuting(tabId, { turnId: id, jobId: job().id }), true); throw new Error('port closed'); });
+  await pipeline.handleOffscreenMessage(message(id, { type: 'TRANSCRIPT', text: 'kliknij Znajdź' }));
+  assert.equal(job().state, 'executed'); assert.equal((await turn()).phase, 'processing');
+  // The answer line has not been claimed yet (the effect arrives with the next document), so the deadline still applies.
+  mock.timers.tick(8000); await flush(); assert.equal(waits(), 1);
+  await pipeline.handleReady(7);
+  assert.deepEqual(announced(), [WAIT, 'Kliknąłem Znajdź. Status: w drodze.']);
+  assert.equal((await turn()).phase, 'idle'); mock.timers.tick(60000); await flush(); assert.equal(waits(), 1);
+}));

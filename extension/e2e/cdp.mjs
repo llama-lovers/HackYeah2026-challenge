@@ -144,3 +144,22 @@ export async function bundleForPage(contents, resolveDir = EXT_DIR) {
   const result = await build({ stdin: { contents, resolveDir, loader: 'ts' }, bundle: true, format: 'iife', target: 'es2022', write: false });
   return result.outputFiles[0].text;
 }
+// Stops every service worker of the browser (the worker is killed exactly like an idle timeout would: memory gone, session storage kept).
+export async function stopServiceWorker(client, port, extensionId) {
+  const page = await openPage(client, 'about:blank');
+  try {
+    await client.send('ServiceWorker.enable', {}, page.sessionId);
+    await client.send('ServiceWorker.stopAllWorkers', {}, page.sessionId);
+    await waitFor(async () => !(await listTargets(port)).some(t => t.type === 'service_worker' && t.url.startsWith(`chrome-extension://${extensionId}/`)), { label: 'service worker stopped' });
+  } finally { await client.send('Target.closeTarget', { targetId: page.targetId }).catch(() => {}); }
+}
+// Any extension event starts the worker again; a message sent from an extension page is the least intrusive one. Resolves with the new worker target.
+export async function wakeServiceWorker(client, port, extensionId) {
+  const { targetId } = await client.send('Target.createTarget', { url: `chrome-extension://${extensionId}/options/options.html` });
+  try {
+    const session = await attach(client, targetId);
+    await waitFor(() => evaluate(client, session, "typeof chrome !== 'undefined' && !!chrome.runtime?.id"), { label: 'extension page' });
+    await evaluate(client, session, "chrome.runtime.sendMessage({ type: 'WAKE' }).then(() => true, () => true)");
+    return await waitForTarget(port, t => t.type === 'service_worker' && t.url.startsWith(`chrome-extension://${extensionId}/`));
+  } finally { await client.send('Target.closeTarget', { targetId }).catch(() => {}); }
+}

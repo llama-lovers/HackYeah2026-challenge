@@ -1,5 +1,5 @@
 import { COMMAND_TOGGLE, isFromOffscreen } from '../shared/protocol.ts';
-import { getTurn, handleToggle, handleOffscreenMessage, handleReady, handleExecuting, handleTabRemoved } from './pipeline.ts';
+import { getTurn, handleToggle, handleOffscreenMessage, handleReady, handleExecuting, handleTabRemoved, rehydrateWait } from './pipeline.ts';
 chrome.commands.onCommand.addListener((command, tab) => {
   if (command === COMMAND_TOGGLE && tab?.id !== undefined) void handleToggle(tab);
 });
@@ -12,6 +12,8 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   }
 });
 chrome.tabs.onRemoved.addListener(tabId => { void handleTabRemoved(tabId); });
+// A worker that was killed and woken keeps the processing deadline of the turn it still owns.
+void rehydrateWait().catch(() => {});
 chrome.runtime.onInstalled.addListener(details => {
   if (details.reason === 'install') void chrome.runtime.openOptionsPage();
 });

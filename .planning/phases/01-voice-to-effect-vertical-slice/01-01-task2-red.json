@@ -1,0 +1,9 @@
+{
+  "command": "uv run --directory server pytest -q tests/test_seams.py::test_stub_default_and_override --junitxml=/tmp/01-01-task2-red.xml",
+  "exitCode": 1,
+  "targetTest": "test_stub_default_and_override",
+  "targetFile": "server/tests/test_seams.py",
+  "expected": "200 transcription response",
+  "actual": "404 missing route",
+  "output": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"0\" failures=\"1\" skipped=\"0\" tests=\"1\" time=\"0.073\" timestamp=\"2026-10-03T15:06:42.230828+02:00\" hostname=\"omarchy\"><testcase classname=\"tests.test_seams\" name=\"test_stub_default_and_override\" time=\"0.033\"><failure message=\"assert 404 == 200&#10; +  where 404 = &lt;Response [404 Not Found]&gt;.status_code\">def test_stub_default_and_override():\n        with make_client(lambda request: pytest.fail(\"unexpected upstream\")) as client:\n            for suffix, expected in [(\"\", \"kliknij Znajdź\"), (\"?text=wpisz%201%20w%20pole\", \"wpisz 1 w pole\"), (\"?text=przesy%C5%82ki\", \"przesyłki\")]:\n                result = client.post(\"/api/transcribe\" + suffix, content=b\"audio\", headers={\"content-type\": \"audio/webm;codecs=opus\"})\n&gt;               assert result.status_code == 200\nE               assert 404 == 200\nE                +  where 404 = &lt;Response [404 Not Found]&gt;.status_code\n\ntests/test_seams.py:20: AssertionError</failure></testcase></testsuite></testsuites>"
+}

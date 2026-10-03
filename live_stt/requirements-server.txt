@@ -1,0 +1,11 @@
+-r requirements-api.txt
+nemo_toolkit[asr]==2.5.3
+numpy==1.26.4
+transformers==4.53.3
+peft==0.17.1
+lightning==2.4.0
+pytorch-lightning==2.4.0
+torchmetrics==1.8.2
+setuptools==80.9.0
+torch==2.8.0
+torchaudio==2.8.0

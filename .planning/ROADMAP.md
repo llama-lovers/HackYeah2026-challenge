@@ -60,7 +60,17 @@ Plans:
   4. When asked to type a password, an SMS/BLIK or one-time code, or to get past a captcha, the agent stops, says why, and suggests asking a person for help.
   5. When several elements match a description, the agent asks with at most 3 numbered options instead of guessing, and no single command runs more than a small fixed number of steps before reporting and waiting.
 
-**Plans**: TBD
+**Plans**: 3 plans
+Plans:
+**Wave 1**
+- [ ] 02-01-PLAN.md — "Sprawdź status przesyłki numer …" end to end: Polish words to digits, digit-group readback, local "tak", fill + Znajdź, verbatim "Status na stronie: …"; recovery dialog, 25 s recording cap, natural Polish numbers (OUT-05), step budget (ACT-05)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 02-02-PLAN.md — Irreversible actions and cookie consent (Didomi) need a locally matched "tak"; the stored proposal runs exactly once with a local effect and no further model request; dialog failure paths proven
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 02-03-PLAN.md — Numbered choices (strict `choose` schema + duplicate-name guard, max 3, choice -> confirmation chain) and refusals of secrets and captchas before any network call
+
 **Notes**: Research flag: confirm with a real tracking number how InPost renders results (XHR vs reload) and how the Didomi banner behaves on a clean profile.
 
 ### Phase 3: Page Exploration & Conversation
@@ -102,6 +112,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 (Phase 3 may start alongsid
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Voice-to-Effect Vertical Slice | 4/4 | In Progress|  |
-| 2. Safe InPost Parcel Tracking | 0/TBD | Not started | - |
+| 2. Safe InPost Parcel Tracking | 0/3 | Planned | - |
 | 3. Page Exploration & Conversation | 0/TBD | Not started | - |
 | 4. Audio Control & Accessible Settings | 0/TBD | Not started | - |

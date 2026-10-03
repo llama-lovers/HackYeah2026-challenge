@@ -15,4 +15,26 @@ export async function run(ctx) {
   assert(!(await ctx.upstreamSince(replyMark)).some(r=>r.response_format.json_schema.name==='action_proposal'));
   assert.equal((await ctx.upstreamSince(mark)).filter(r=>r.response_format.json_schema.name==='action_proposal').length,1);
   assert.equal(await ctx.swEval("chrome.storage.session.get('pending').then(s=>s.pending??null)"), null);
+  const prompt = 'Pasuje kilka elementów. Jeden: Usuń, Paczka z Krakowa. Dwa: Usuń, Paczka z Gdańska. Trzy: Usuń, Paczka z Poznania. Który? Powiedz numer.';
+  const duplicate = await ctx.openPage('/fixtures/ambiguous.html');
+  const duplicateMark = await ctx.upstreamMark();
+  await ctx.speak(duplicate, 'kliknij Usuń'); await ctx.waitForLive(duplicate,prompt); await ctx.waitIdle();
+  assert.deepEqual(await duplicate.evaluate('window.__deleted'),[]);
+  await ctx.speak(duplicate,'cztery'); await ctx.waitForLive(duplicate,'Powiedz jeden, dwa albo trzy.'); await ctx.waitIdle();
+  await ctx.speak(duplicate,'trzy'); await ctx.waitForLive(duplicate,'Chcę kliknąć „Usuń”, Paczka z Poznania. Potwierdzasz? Powiedz tak albo nie.'); await ctx.waitIdle();
+  assert.deepEqual(await duplicate.evaluate('window.__deleted'),[]);
+  await ctx.speak(duplicate,'tak'); await ctx.waitForLive(duplicate,'Klikam Usuń.'); await ctx.waitForLive(duplicate,'Kliknąłem Usuń. Strona informuje: Usunięto paczkę z Poznania.'); await ctx.waitIdle();
+  assert.deepEqual(await duplicate.evaluate('window.__deleted'),['Poznań']);
+  assert.equal((await ctx.upstreamSince(duplicateMark)).length,1);
+  const cancelled = await ctx.openPage('/fixtures/ambiguous.html');
+  await ctx.speak(cancelled,'kliknij Usuń'); await ctx.waitForLive(cancelled,prompt); await ctx.waitIdle();
+  await ctx.speak(cancelled,'nie'); await ctx.waitForLive(cancelled,'Anulowałem.'); await ctx.waitIdle();
+  assert.deepEqual(await cancelled.evaluate('window.__deleted'),[]);
+  assert.equal(await ctx.swEval("chrome.storage.session.get('pending').then(s=>s.pending??null)"), null);
+  const missed = await ctx.openPage('/fixtures/ambiguous.html');
+  await ctx.speak(missed,'kliknij Usuń'); await ctx.waitForLive(missed,prompt); await ctx.waitIdle();
+  await ctx.speak(missed,'cztery'); await ctx.waitForLive(missed,'Powiedz jeden, dwa albo trzy.'); await ctx.waitIdle();
+  await ctx.speak(missed,'cztery'); await ctx.waitForLive(missed,'Anulowałem.'); await ctx.waitIdle();
+  assert.deepEqual(await missed.evaluate('window.__deleted'),[]);
+  assert.equal(await ctx.swEval("chrome.storage.session.get('pending').then(s=>s.pending??null)"), null);
 }

@@ -26,6 +26,16 @@ export function addContexts(s: Snapshot, options: ChoiceOption[]): ChoiceOption[
   });
   return contextual.every(o => o.context) && new Set(contextual.map(o => normalizedName(o.context))).size === options.length ? contextual : options;
 }
+export function duplicateOptions(s: Snapshot, targetId: string): ChoiceOption[] {
+  const target = s.nodes.find(n => n.kind === 'interactive' && n.id === targetId);
+  if (!target || target.state?.disabled) return [];
+  const action = FILL_ROLES.has(target.role) ? 'fill' : 'click';
+  const ids = s.nodes.filter(n => n.kind === 'interactive' && !n.state?.disabled && n.role === target.role && normalizedName(n.name) === normalizedName(target.name) && !(action === 'fill' && n.state?.sensitive)).map(n => n.id!).filter(Boolean);
+  if (ids.length < 2 || !ids.includes(targetId)) return [];
+  const selected = ids.slice(0, MAX_OPTIONS);
+  if (!selected.includes(targetId)) selected[MAX_OPTIONS - 1] = targetId;
+  return addContexts(s, optionsFromIds(s, selected, action));
+}
 const numbers = [
   ['jeden','jedynka','pierwszy','pierwsza','pierwsze'], ['dwa','dwojka','drugi','druga','drugie'], ['trzy','trojka','trzeci','trzecia','trzecie'],
   ['cztery','czwarty','czwarta','czwarte'], ['piec','piaty','piata','piate'], ['szesc','szosty','szosta','szoste'],

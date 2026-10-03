@@ -7,7 +7,7 @@ import { createBudget, takeStep } from '../shared/limits.ts';
 import type { StepBudget } from '../shared/limits.ts';
 import { isParcelDigits, pickParcelField, pickSearchButton } from '../shared/parcel.ts';
 import { routeReply } from '../shared/pending.ts';
-import { optionsFromIds, addContexts } from '../shared/choice.ts';
+import { optionsFromIds, addContexts, duplicateOptions } from '../shared/choice.ts';
 import type { PendingInteraction } from '../shared/pending.ts';
 import { isEmptyDiff } from '../shared/diff.ts';
 import type { Proposal, ConfirmCategory } from '../shared/validate.ts';
@@ -254,6 +254,13 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
     if (options.length < 2) { await say(msg.CHOICE_UNCLEAR); return; }
     await setPending(turnId, {kind:'choose_option',action,text:proposal.text,needsConfirmation:proposal.needs_confirmation,epoch:result.snapshot.epoch,docId:result.docId,preSnapshot:result.snapshot,options,id:crypto.randomUUID(),tabId:tabId!,createdAt:Date.now(),reprompts:0});
     await say(msg.choicePrompt(options)); return;
+  }
+  if (proposal.action === 'click' || proposal.action === 'fill') {
+    const options = duplicateOptions(result.snapshot, proposal.target);
+    if (options.length >= 2) {
+      await setPending(turnId, {kind:'choose_option',action:proposal.action,text:proposal.text,needsConfirmation:proposal.needs_confirmation,epoch:result.snapshot.epoch,docId:result.docId,preSnapshot:result.snapshot,options,id:crypto.randomUUID(),tabId:tabId!,createdAt:Date.now(),reprompts:0});
+      await say(msg.choicePrompt(options)); return;
+    }
   }
   const outcome = await performProposal(run, { proposal, epoch: result.snapshot.epoch, docId: result.docId, preSnapshot: result.snapshot, announce: 'model' });
   return outcome === 'handoff' ? 'handoff' : undefined;

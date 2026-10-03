@@ -103,12 +103,50 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
+| VOICE-01 | Phase 1 | Pending |
+| VOICE-02 | Phase 1 | Pending |
+| VOICE-03 | Phase 1 | Pending |
+| VOICE-04 | Phase 4 | Pending |
+| VOICE-05 | Phase 4 | Pending |
+| OUT-01 | Phase 1 | Pending |
+| OUT-02 | Phase 4 | Pending |
+| OUT-03 | Phase 3 | Pending |
+| OUT-04 | Phase 3 | Pending |
+| OUT-05 | Phase 2 | Pending |
+| OUT-06 | Phase 4 | Pending |
+| OUT-07 | Phase 3 | Pending |
+| OUT-08 | Phase 3 | Pending |
+| PAGE-01 | Phase 1 | Pending |
+| PAGE-02 | Phase 3 | Pending |
+| PAGE-03 | Phase 3 | Pending |
+| ACT-01 | Phase 1 | Pending |
+| ACT-02 | Phase 1 | Pending |
+| ACT-03 | Phase 3 | Pending |
+| ACT-04 | Phase 1 | Pending |
+| ACT-05 | Phase 2 | Pending |
+| ACT-06 | Phase 2 | Pending |
+| ACT-07 | Phase 1 | Pending |
+| SAFE-01 | Phase 2 | Pending |
+| SAFE-02 | Phase 2 | Pending |
+| SAFE-03 | Phase 2 | Pending |
+| SAFE-04 | Phase 1 | Pending |
+| SAFE-05 | Phase 4 | Pending |
+| SAFE-06 | Phase 2 | Pending |
+| SAFE-07 | Phase 4 | Pending |
+| PROXY-01 | Phase 1 | Pending |
+| PROXY-02 | Phase 1 | Pending |
+| PROXY-03 | Phase 1 | Pending |
+| INPOST-01 | Phase 2 | Pending |
+| INPOST-02 | Phase 2 | Pending |
+| INPOST-03 | Phase 2 | Pending |
+| A11Y-01 | Phase 4 | Pending |
+| A11Y-02 | Phase 4 | Pending |
 
 **Coverage:**
 - v1 requirements: 38 total
-- Mapped to phases: 0
-- Unmapped: 38 ⚠️
+- Mapped to phases: 38
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-10-03*
-*Last updated: 2026-10-03 after initial definition*
+*Last updated: 2026-10-03 after roadmap creation*

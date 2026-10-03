@@ -1,0 +1,90 @@
+"""Deterministic offline test upstream; never use with real user data."""
+
+import argparse
+import json
+import re
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+def extract(content, tag):
+    match = re.search(rf"<{tag}>\n(.*?)\n</{tag}>", content, re.S)
+    return match.group(1) if match else ""
+
+
+def fake_reply(body: dict) -> dict:
+    name = body["response_format"]["json_schema"]["name"]
+    content = next(message["content"] for message in reversed(body["messages"]) if message["role"] == "user")
+    if name == "effect_summary":
+        diff = json.loads(extract(content, "page_diff"))
+        change = diff.get("changed", [])
+        text = (next(iter(diff.get("alerts", [])), "") or next(iter(diff.get("added", [])), "")
+                or (f'{change[0]["name"]} {change[0]["what"]}' if change else "")
+                or diff.get("title", {}).get("after", "") or diff.get("path", {}).get("after", ""))
+        payload = {"say": ("Zmiana na stronie: " + text)[:150] if text else "Zmiana na stronie."}
+    else:
+        utterance = extract(content, "utterance").strip().removesuffix(".")
+        lines = [match.groupdict() for line in extract(content, "page_snapshot").splitlines()
+                 if (match := re.match(r'^(?P<role>[a-z]+) (?P<id>e\d+) "(?P<name>[^"]*)"(?P<rest>.*)$', line))]
+        payload = {"action": "none", "target": "", "text": "", "needs_confirmation": False, "say": "Nie rozumiem polecenia."}
+        target, action, text = None, None, ""
+        if utterance.casefold().startswith("kliknij nieistniejący"):
+            target, action = {"id": "e999"}, "click"
+        elif utterance.casefold().startswith("kliknij "):
+            expected = utterance[8:].casefold()
+            target = next((line for line in lines if line["role"] in {"button", "link", "checkbox", "radio", "menuitem", "tab"} and line["name"].casefold() == expected), None)
+            action = "click"
+            payload["say"] = "Nie widzę takiego elementu."
+        elif match := re.match(r"wpisz (.*?) w przycisk (.+)$", utterance, re.I):
+            text, expected = match.groups()
+            target = next((line for line in lines if line["role"] == "button" and line["name"].casefold() == expected.casefold()), None)
+            action = "fill"
+        elif match := re.match(r"wpisz (.*?) w pole (.+)$", utterance, re.I):
+            text, words = match.groups()
+            stems = [word[:5].casefold() for word in words.split() if len(word) >= 5]
+            target = next((line for line in lines if line["role"] in {"textbox", "searchbox", "combobox"}
+                           and any(stem in (line["name"] + " " + " ".join(re.findall(r'placeholder="([^"]*)"', line["rest"]))).casefold() for stem in stems)), None)
+            action = "fill"
+        if target:
+            if re.fullmatch(r"[0-9 ]+", text):
+                text = text.replace(" ", "")
+            payload.update(action=action, target=target["id"], text=text, say="")
+    return {"id": "fake", "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": json.dumps(payload, ensure_ascii=False)}}]}
+
+
+def make_server(port: int, record=None):
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def reply(self, status, payload):
+            data = json.dumps(payload, ensure_ascii=False).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_GET(self):
+            self.reply(200, {"ok": True}) if self.path == "/health" else self.reply(404, {"error": "not_found"})
+
+        def do_POST(self):
+            if self.path != "/api/v1/chat/completions":
+                self.reply(404, {"error": "not_found"})
+                return
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if record is not None:
+                with open(record, "a", encoding="utf-8") as output:
+                    output.write(json.dumps(body, ensure_ascii=False) + "\n")
+            self.reply(200, fake_reply(body))
+
+    return ThreadingHTTPServer(("127.0.0.1", port), Handler)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=8799)
+    parser.add_argument("--record")
+    args = parser.parse_args()
+    with make_server(args.port, args.record) as server:
+        print(f"fake-openrouter listening on 127.0.0.1:{server.server_port}", flush=True)
+        server.serve_forever()

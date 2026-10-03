@@ -1,7 +1,7 @@
 {
   "command": "uv run --directory server pytest -q tests/test_seams.py::test_stub_default_and_override --junitxml=/tmp/01-01-task2-red.xml",
   "exitCode": 1,
-  "targetTest": "test_stub_default_and_override",
+  "targetTest": "tests.test_seams",
   "targetFile": "server/tests/test_seams.py",
   "expected": "200 transcription response",
   "actual": "404 missing route",

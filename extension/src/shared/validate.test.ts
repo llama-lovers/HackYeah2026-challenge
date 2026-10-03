@@ -57,3 +57,10 @@ test('only the two policy rejections are confirmable', () => {
   for (const reason of ['needs_confirmation', 'irreversible']) assert.equal(check?.(reason), true);
   for (const reason of ['stale', 'hidden', 'disabled', 'sensitive_fill', 'not_found']) assert.equal(check(reason), false);
 });
+test('consent container overrides benign labels and known-safe controls', () => {
+  for (const name of ['Zamknij', 'Znajdź', 'Polityce cookies']) {
+    const consentTarget = { ...target, name, consent: true };
+    assert.deepEqual(validateProposal(proposal, consentTarget), { ok: false, reason: 'irreversible' });
+    assert.deepEqual(validateProposal(proposal, consentTarget, { confirmed: true }), { ok: true, kind: 'click' });
+  }
+});

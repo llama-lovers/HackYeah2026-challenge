@@ -21,6 +21,15 @@ test('confirmation prompt names the exact control without echoing typed text', (
   assert.equal(prompt('fill', 'Uwagi', 'model_flag'), 'Chcę wpisać tekst w pole „Uwagi”. Potwierdzasz? Powiedz tak albo nie.');
   assert.equal(prompt('click', 'Zapłać', 'irreversible', 'za zamówienie'), 'Chcę kliknąć „Zapłać”, za zamówienie. Potwierdzasz? Powiedz tak albo nie.');
 });
+test('consent prompt informs the user and closing the dialog has a local effect', () => {
+  assert.equal(m.confirmPrompt('click', 'ZAAKCEPTUJ WSZYSTKO', 'consent'), 'Chcę kliknąć „ZAAKCEPTUJ WSZYSTKO” w oknie zgody na pliki cookie. Potwierdzasz? Powiedz tak albo nie.');
+  const action = { kind: 'click' as const, name: 'ZAAKCEPTUJ WSZYSTKO', role: 'button' };
+  const diff = { added: [], removed: ['button ZAAKCEPTUJ WSZYSTKO'], changed: [], alerts: [] };
+  const local = m.localEffect as any;
+  assert.equal(local(action, diff, 'consent'), 'Kliknąłem ZAAKCEPTUJ WSZYSTKO. Okno zgód zostało zamknięte.');
+  assert.equal(local(action, { ...diff, title: { before: 'T', after: 'Polityka' } }, 'consent'), 'Kliknąłem ZAAKCEPTUJ WSZYSTKO. Jesteś teraz na stronie Polityka.');
+  assert.equal(local(action, { ...diff, alerts: ['Komunikat strony.'] }, 'consent'), 'Kliknąłem ZAAKCEPTUJ WSZYSTKO. Strona informuje: Komunikat strony.');
+});
 test('none response collapses whitespace, caps code points and supplies fallback', () => {
   assert.equal(m.noneSay(' '), 'Nie rozumiem polecenia. Powiedz je inaczej.');
   assert.equal(m.noneSay(' a\n b '), 'a b');

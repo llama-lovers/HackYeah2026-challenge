@@ -6,6 +6,12 @@ from app.config import Settings
 from app.main import create_app
 
 
+@pytest.fixture(autouse=True)
+def skip_model_startup(monkeypatch):
+    # API contract tests do not load the real VAD model at each lifespan startup.
+    monkeypatch.setattr("app.main.initialize_audio_processing", lambda: None)
+
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"

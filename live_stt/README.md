@@ -14,10 +14,17 @@ systemowego Pythona. Instalacja uv: https://docs.astral.sh/uv/getting-started/in
 znajdują się w `uv.lock`. Instalacja w Dockerze używa `uv sync --locked`;
 nie aktualizuje samodzielnie wersji przy każdym budowaniu.
 
-1. Rozpakuj folder. Jeśli zastępujesz poprzednią wersję, zachowaj swój klucz
-   i wpisz go do nowego `config.env`. Nie używaj równolegle starego serwera
-   na tym samym porcie 7000.
-2. W `config.env` wybierz tryb (przykłady poniżej).
+1. Rozpakuj folder. Paczka zawiera `env.example`, bez prywatnego `config.env`.
+   Przed pierwszym uruchomieniem skopiuj szablon (Windows CMD):
+
+   ```bat
+   copy env.example config.env
+   ```
+
+   Na Linuxie/macOS: `cp env.example config.env`. Jeśli masz już własny
+   `config.env`, zachowaj go; nie nadpisuj go szablonem. Nie używaj równolegle
+   starego serwera na tym samym porcie 7000.
+2. W `config.env` wybierz tryb i wpisz klucz dla OpenRouter (przykłady poniżej).
 3. Uruchom `start.bat` albo w folderze projektu:
 
 ```bat
@@ -39,6 +46,26 @@ ws://127.0.0.1:7000/v1/transcribe
 Pole klucza w GUI zostaw puste. Klucz OpenRouter jest wyłącznie na serwerze.
 Z innego komputera użyj adresu IP serwera, np.
 `ws://192.168.7.159:7000/v1/transcribe`.
+
+## Konfiguracja i Git
+
+- `env.example` — szablon ustawień bez prawdziwego klucza, dodawany do repozytorium.
+- `config.env` — lokalna konfiguracja, ignorowana przez `.gitignore` i niewysyłana w paczce.
+- Docker nadal czyta `config.env`; przed uruchomieniem utwórz go z szablonu.
+- Korzystając bezpośrednio z poleceń Docker Compose poniżej, nie potrzebujesz uv ani Pythona na hoście.
+
+Jeśli `config.env` był już śledzony przez Git, usuń go wyłącznie z indeksu
+(plik pozostanie na dysku):
+
+```sh
+git rm --cached config.env
+```
+
+Następnie dodaj szablon i regułę ignorowania do commita:
+
+```sh
+git add env.example .gitignore
+```
 
 ## OpenRouter
 

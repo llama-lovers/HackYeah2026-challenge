@@ -14,6 +14,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 
 from app import stt
+from app.audio_processing import initialize_audio_processing
 from app.config import SERVER_DIR, Settings, load_env_file
 from app.middleware import AccessLogMiddleware, BodyLimitMiddleware, OriginGuardMiddleware
 from app.openrouter import UpstreamError, chat_json, warm_up
@@ -33,6 +34,9 @@ def create_app(settings: Settings | None = None,
 
     @asynccontextmanager
     async def lifespan(app):
+        if settings.stt_mode == "whisper":
+            await run_in_threadpool(initialize_audio_processing)
+            logger.info("Audio preprocessing ready: Silero VAD on CPU, mono 16 kHz WAV")
         if settings.extension_id:
             logger.info("extension origin: chrome-extension://%s", settings.extension_id)
         else:

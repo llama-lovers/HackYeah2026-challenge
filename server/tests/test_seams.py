@@ -55,6 +55,9 @@ def test_whisper_without_key_fails_closed(monkeypatch):
 
 def _whisper(monkeypatch, handler, model=None):
     from app import stt_whisper
+    from app.audio_processing import AudioChunk
+    # Codec/VAD behavior is tested separately with real WAV/WebM input.
+    monkeypatch.setattr(stt_whisper, "prepare_audio", lambda audio, fmt: [AudioChunk(audio, 0, ((0, 10),))])
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.delenv("OPENROUTER_BASE_URL", raising=False)
     if model:
@@ -77,7 +80,9 @@ def test_whisper_request_shape(monkeypatch, mime, fmt):
     assert str(request.url) == "https://openrouter.ai/api/v1/audio/transcriptions"
     assert request.headers["authorization"] == "Bearer test-key"
     assert body == {"model": "openai/whisper-large-v3-turbo", "language": "pl",
-                    "input_audio": {"data": "AGF1ZGlv", "format": fmt}}
+                    "temperature": 0.0, "response_format": "verbose_json",
+                    "timestamp_granularities": ["word", "segment"],
+                    "input_audio": {"data": "AGF1ZGlv", "format": "wav"}}
 
 
 def test_whisper_model_switch_and_silence(monkeypatch):

@@ -220,3 +220,5 @@ __marimo__/
 .streamlit/secrets.toml
 node_modules/
 extension/dist-e2e/
+# Local copies of outgoing microphone recordings
+server/audio-debug/

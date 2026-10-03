@@ -1,0 +1,17 @@
+services:
+  parakeet-openrouter:
+    build:
+      context: .
+      target: ${ASR_BACKEND:-openrouter}
+    image: parakeet-asr:${ASR_BACKEND:-openrouter}
+    env_file:
+      - config.env
+    ports:
+      - "7000:7000"
+    volumes:
+      - parakeet-cache:/root/.cache
+    restart: unless-stopped
+    init: true
+    shm_size: 1gb
+volumes:
+  parakeet-cache:

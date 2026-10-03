@@ -22,11 +22,16 @@ const safe = (s: string, max = MAX_TEXT) => {
 function parentElement(el: Element): Element | null {
   return el.parentElement ?? (el.getRootNode() instanceof ShadowRoot ? (el.getRootNode() as ShadowRoot).host : null);
 }
-export function isElementVisible(el: Element): boolean {
-  if (!el.isConnected) return false;
+function subtreeExcluded(el: Element): boolean {
+  if (!el.isConnected) return true;
   for (let ancestor: Element | null = el; ancestor; ancestor = parentElement(ancestor)) {
-    if (ancestor.hasAttribute('hidden') || ancestor.hasAttribute('inert') || ancestor.getAttribute('aria-hidden') === 'true') return false;
+    const style = getComputedStyle(ancestor);
+    if (ancestor.hasAttribute('hidden') || ancestor.hasAttribute('inert') || ancestor.getAttribute('aria-hidden') === 'true' || style.display === 'none' || style.contentVisibility === 'hidden' || Number(style.opacity) === 0) return true;
   }
+  return false;
+}
+export function isElementVisible(el: Element): boolean {
+  if (subtreeExcluded(el)) return false;
   const r = el.getBoundingClientRect();
   return r.width > 0 && r.height > 0 && el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
 }
@@ -100,7 +105,7 @@ function visibleText(el: Element): string {
   const parts: string[] = [];
   for (const child of el.childNodes) {
     if (child.nodeType === Node.TEXT_NODE) parts.push(child.textContent ?? '');
-    else if (child instanceof Element && !SKIP.has(child.tagName) && isElementVisible(child)) parts.push(visibleText(child));
+    else if (child instanceof Element && !SKIP.has(child.tagName) && !subtreeExcluded(child) && getComputedStyle(child).visibility !== 'hidden') parts.push(visibleText(child));
   }
   return collapse(parts.join(' '));
 }
@@ -127,14 +132,15 @@ export function takeSnapshot(doc: Document = document, opts?: { excludeRoot?: El
   collect(doc);
   secretValues = [...secrets].sort((a, b) => b.length - a.length);
   const candidates: { node: SnapNode; el: Element; priority: number }[] = [];
-  const walk = (el: Element) => {
-    if (SKIP.has(el.tagName) || el.id === LIVE_REGION_ID || el === opts?.excludeRoot || !isElementVisible(el)) return;
+  const walk = (el: Element, suppressProse = false) => {
+    if (SKIP.has(el.tagName) || el.id === LIVE_REGION_ID || el === opts?.excludeRoot || subtreeExcluded(el)) return;
+    const visible = isElementVisible(el);
     const role = roleOf(el), rect = el.getBoundingClientRect();
     const viewport = rect.bottom > 0 && rect.right > 0 && rect.top < (doc.defaultView?.innerHeight ?? 0) && rect.left < (doc.defaultView?.innerWidth ?? 0);
     let inMain = false;
     for (let p: Element | null = el; p; p = parentElement(p)) if (p.matches('main,[role="main"]')) { inMain = true; break; }
     const preferred = viewport || inMain;
-    if (INTERACTIVE.has(role)) {
+    if (visible && INTERACTIVE.has(role)) {
       const node: SnapNode = { kind: 'interactive', role, name: safe(computeName(el)), state: states(el) };
       const placeholder = safe(el.getAttribute('placeholder') ?? '');
       if (placeholder && placeholder !== node.name) node.hint = placeholder;
@@ -148,21 +154,21 @@ export function takeSnapshot(doc: Document = document, opts?: { excludeRoot?: El
       candidates.push({ node, el, priority: preferred ? 0 : 3 });
       return;
     }
-    if (role === 'heading') {
+    if (visible && role === 'heading' && !suppressProse) {
       candidates.push({ node: { kind: 'heading', role, name: safe(visibleText(el)) }, el, priority: 1 });
-      return;
+      suppressProse = true;
     }
-    if (['alert', 'status', 'log'].includes(role) || ['polite', 'assertive'].includes(el.getAttribute('aria-live') ?? '')) {
+    if (visible && !suppressProse && (['alert', 'status', 'log'].includes(role) || ['polite', 'assertive'].includes(el.getAttribute('aria-live') ?? ''))) {
       const text = safe(visibleText(el), MAX_ALERT);
       if (text) candidates.push({ node: { kind: 'alert', role: role || 'status', name: text }, el, priority: 1 });
-      return;
+      suppressProse = true;
     }
-    if (rect.width * rect.height > 1 && !['LABEL', 'LEGEND'].includes(el.tagName)) {
+    if (visible && !suppressProse && rect.width * rect.height > 1 && !['LABEL', 'LEGEND', 'TEXTAREA', 'SELECT'].includes(el.tagName)) {
       const direct = Array.from(el.childNodes).filter(n => n.nodeType === Node.TEXT_NODE).map(n => n.textContent ?? '').join(' ');
       if (collapse(direct)) candidates.push({ node: { kind: 'text', role: 'text', name: safe(direct) }, el, priority: preferred ? 2 : 3 });
     }
-    if (el.shadowRoot) for (const child of el.shadowRoot.children) walk(child);
-    for (const child of el.children) walk(child);
+    if (el.shadowRoot) for (const child of el.shadowRoot.children) walk(child, suppressProse);
+    for (const child of el.children) walk(child, suppressProse);
   };
   if (doc.body) walk(doc.body);
   const truncated = candidates.length > MAX_NODES;

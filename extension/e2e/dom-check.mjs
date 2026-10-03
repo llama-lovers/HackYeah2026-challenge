@@ -97,6 +97,10 @@ try {
   for (const secret of ['Tajne!Haslo1', '731904', '846', 'EchoSecret']) assert.ok(!JSON.stringify(privateSnapshot).includes(secret), 'aggregated secret: ' + secret);
   assert.ok(JSON.stringify(privateSnapshot).includes('123456789012345678901234'));
   console.log('PASS dom-check: secret echoes, aggregates and referenced labels');
+  await page.evaluate(`document.body.innerHTML='<main><div style="display:contents"><button>Szukaj przez contents</button></div><div style="width:0;height:0;position:relative"><button style="position:absolute;width:100px;height:30px">Znajdź pozycjonowany</button></div><span id="shadow-host" style="display:contents"></span><div aria-live="polite">Wynik <input placeholder="Numer przesyłki"><button>Znajdź live</button></div><h2>Nagłówek <button>Szukaj nagłówek</button></h2></main>'; document.querySelector('#shadow-host').attachShadow({mode:'open'}).innerHTML='<button>Szukaj shadow</button>'`);
+  const structural = await page.evaluate(`__snapTest.takeSnapshot()`);
+  for (const name of ['Szukaj przez contents', 'Znajdź pozycjonowany', 'Szukaj shadow', 'Znajdź live', 'Szukaj nagłówek', 'Numer przesyłki']) assert.ok(structural.nodes.some(n => n.kind === 'interactive' && n.name === name), 'missing descendant ' + name);
+  console.log('PASS dom-check: structural containers retain visible controls');
 } catch (error) {
   console.error(`FAIL dom-check: ${error.stack}\n${lastText}`); process.exitCode = 1;
 } finally {

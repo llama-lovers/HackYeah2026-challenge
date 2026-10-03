@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { waitForTarget, attach, evaluate, waitFor } from '../cdp.mjs';
 import { OPTIONS_MIC_GRANTED, OPTIONS_SHORTCUT_MISSING, MIC_DENIED } from '../../src/shared/messages.pl.ts';
 export const name = 'onboarding';
+export const freshBrowser = true;
 export async function run(ctx) {
   const target = await waitForTarget(ctx.browser.port, t => t.type === 'page' && t.url.endsWith('/options/options.html'));
   const session = await attach(ctx.client, target.id);

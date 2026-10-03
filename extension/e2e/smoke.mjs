@@ -34,7 +34,7 @@ try {
     const started = Date.now();
     try {
       const signature = JSON.stringify(scenario.buildEnv ?? {});
-      if (signature !== lastBuild) {
+      if (signature !== lastBuild || scenario.freshBrowser) {
         client?.close(); await browser?.close();
         const build = spawnSync(process.execPath, ['scripts/build.mjs'], { cwd: EXT_DIR, env: { ...process.env, E2E: '1', OUT_DIR: 'dist-e2e', PROXY_URL: proxyOrigin, ...scenario.buildEnv }, encoding: 'utf8' });
         if (build.status !== 0) throw new Error(build.stderr || build.stdout);

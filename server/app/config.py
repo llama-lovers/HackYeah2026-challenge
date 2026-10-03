@@ -54,6 +54,7 @@ class Settings:
     openrouter_timeout_s: float = 15.0
     action_max_tokens: int = 300
     effect_max_tokens: int = 150
+    explore_max_tokens: int = 300
     stt_mode: Literal["stub", "whisper"] = "stub"
     stt_stub_text: str = "kliknij Znajdź"
     max_body_bytes: int = 2097152

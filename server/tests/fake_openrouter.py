@@ -11,10 +11,44 @@ def extract(content, tag):
     return match.group(1) if match else ""
 
 
+def exploration_payload(content: str) -> dict:
+    """Read-only exploration reply. FAKE-MODEL:<kind> markers in the page text steer deliberately bad outputs."""
+    mode = extract(content, "mode").strip()
+    snapshot = extract(content, "page_snapshot")
+    kind = (re.search(r"FAKE-MODEL:([a-z]+)", snapshot) or [None, ""])[1]
+    if mode == "summary":
+        title = (re.search(r"^title: (.*)$", snapshot, re.M) or [None, ""])[1].strip()
+        heading = (re.search(r'^heading "(.*)"$', snapshot, re.M) or [None, ""])[1].strip()
+        sentences = [f"To strona „{title}”." if title else "To strona bez tytułu."]
+        if heading:
+            sentences.append(f"Główny nagłówek to „{heading}”.")
+        payload = {"sentences": sentences, "candidate_ids": []}
+        if kind == "null":
+            payload["sentences"] = None
+        elif kind == "empty":
+            payload["sentences"] = []
+        elif kind == "extra":
+            payload["action"] = "click"
+        elif kind == "long":
+            payload["sentences"] = ["Pierwsze zdanie.", "Drugie zdanie.", "Trzecie zdanie."]
+        elif kind == "fragment":
+            payload["sentences"] = ["To strona, na której można"]
+        return payload
+    candidates = json.loads(extract(content, "candidates") or "[]")
+    ids = [candidate["id"] for candidate in candidates][:int(extract(content, "max_ids") or 3)]
+    if kind == "dup" and ids:
+        ids = [ids[0], ids[0]]
+    elif kind == "fabricated":
+        ids = ["e999", *ids[:1]]
+    return {"sentences": [], "candidate_ids": ids}
+
+
 def fake_reply(body: dict) -> dict:
     name = body["response_format"]["json_schema"]["name"]
     content = next(message["content"] for message in reversed(body["messages"]) if message["role"] == "user")
-    if name == "effect_summary":
+    if name == "page_exploration":
+        payload = exploration_payload(content)
+    elif name == "effect_summary":
         diff = json.loads(extract(content, "page_diff"))
         change = diff.get("changed", [])
         text = (next(iter(diff.get("alerts", [])), "") or next(iter(diff.get("added", [])), "")

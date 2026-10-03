@@ -31,6 +31,11 @@ export interface ActionRequestBody { utterance: string; snapshot: string }
 export interface ExecutedAction { kind: 'click' | 'fill'; name: string; role: string }
 export interface EffectRequestBody { action: ExecutedAction; diff: PageDiff }
 export interface EffectResponse { say: string }
+export type ExplorationMode = 'summary' | 'actions';
+export type Verbosity = 'concise' | 'standard' | 'detailed';
+export interface ExplorationCandidate { id: string; role: string; name: string }
+export interface ExplorationRequestBody { mode: ExplorationMode; verbosity: Verbosity; snapshot: string; candidates: ExplorationCandidate[] }
+export interface ExplorationResponse { sentences: string[]; candidate_ids: string[] }
 export interface TranscribeResponse { text: string }
 export interface ProxyErrorBody { error: string }
 export interface PendingEffectJob { id: string; turnId: string; tabId: number; state: 'proposed' | 'executed' | 'claimed'; action: ExecutedAction; preSnapshot: Snapshot; startedAt: number; effect?: 'model' | 'local' }

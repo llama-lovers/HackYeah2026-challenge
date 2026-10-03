@@ -90,3 +90,5 @@ export function localEffect(action: ExecutedAction, diff: PageDiff, category?: C
   if (text) return prefix + ' Na stronie pojawiło się: ' + text + (/[.!?…]$/u.test(text) ? '' : '.');
   return prefix + ' Strona się zmieniła.';
 }
+export const EXPLORE_FAILED = 'Nie udało się opisać tej strony. Spróbuj jeszcze raz za chwilę.';
+export const PAGE_EMPTY = 'Ta strona wydaje się pusta albo jeszcze się ładuje. Poczekaj chwilę i zapytaj jeszcze raz.';

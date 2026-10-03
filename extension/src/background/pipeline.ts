@@ -14,6 +14,7 @@ import type { Proposal, ConfirmCategory } from '../shared/validate.ts';
 import { onToggle, isStale } from '../shared/turn.ts';
 import type { TurnState } from '../shared/turn.ts';
 import { maskText } from '../shared/mask.ts';
+import { parseExploreCommand, decodeSummary } from '../shared/exploration.ts';
 import { toModelText, spokenName } from '../shared/snapshot-format.ts';
 import * as msg from '../shared/messages.pl.ts';
 import { postJson, EgressBlockedError } from './proxy.ts';
@@ -204,6 +205,24 @@ async function parcelReadback(run: CommandRun, digits: string): Promise<void> {
     await say(msg.parcelReadback(digitsToSpokenGroups(digits)));
   } catch { await say(msg.SNAPSHOT_FAILED); }
 }
+// Read-only exploration: it requests a snapshot and speaks; it never sends EXECUTE, /api/action or stores a pending interaction.
+async function runSummary(run: CommandRun): Promise<void> {
+  const { turnId, tabId, signal } = run;
+  const say = async (text: string) => { if (await ownsTurn(turnId)) await announce(tabId, text); };
+  let result: SnapshotResult;
+  try {
+    result = await chrome.tabs.sendMessage(tabId, { type: 'SNAPSHOT' }, { frameId: 0 });
+    if (!result.ok) throw new Error('snapshot_failed');
+  } catch { await say(msg.SNAPSHOT_FAILED); return; }
+  if (!(await ownsTurn(turnId))) return;
+  if (!result.snapshot.nodes.length) { await say(msg.PAGE_EMPTY); return; }
+  let reply: unknown;
+  try { reply = await postJson<unknown>('/api/explore', { mode: 'summary', verbosity: 'standard', snapshot: toModelText(result.snapshot), candidates: [] }, 20000, signal); }
+  catch (error) { await say(error instanceof EgressBlockedError ? msg.SNAPSHOT_FAILED : msg.EXPLORE_FAILED); return; }
+  if (!(await ownsTurn(turnId))) return;
+  const sentences = decodeSummary(reply);
+  await say(sentences ? sentences.join(' ') : msg.EXPLORE_FAILED);
+}
 export async function runCommand(turnId: string, tabId: number | undefined, rawText: string): Promise<'handoff' | void> {
   const signal = turnSignal(turnId);
   const run: CommandRun = { turnId, tabId: tabId!, signal, budget: createBudget() };
@@ -235,6 +254,8 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
       if (parcelReply || pending.kind === 'choose_option' || intent.kind === 'yes' || intent.kind === 'no') { await say(msg.CONFIRM_EXPIRED); return; }
     }
   }
+  // Complete exploration phrases are routed locally, before any action proposal can be requested.
+  if (parseExploreCommand(text) === 'summary') { if (tabId === undefined) { await say(msg.SNAPSHOT_FAILED); return; } return runSummary(run); }
   if (intent.kind === 'track_parcel') {
     if (tabId === undefined) { await say(msg.SNAPSHOT_FAILED); return; }
     const number = wordsToDigits(intent.rest);

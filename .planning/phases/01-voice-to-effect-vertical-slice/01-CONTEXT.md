@@ -46,6 +46,12 @@ Not in this phase: confirmations / "tak" (Phase 2), InPost number normalization 
 - **D-20:** The proxy never logs request or response bodies, only method, route, status and latency.
 - **D-21:** The masking check uses a **local fixture page served by the proxy** (e.g. `GET /fixtures/sensitive.html`) with password, PESEL, IBAN, card number, CVV and one-time-code fields, and `http://localhost:8787/*` is added to `content_scripts.matches`. This is a dev/test fixture, not the out-of-scope demo Plan B.
 
+### Post-research decisions (2026-10-03)
+- **D-22:** Success criterion 2 targets the real InPost tracking submit button **"Znajdź"** (never disabled). Effect scenario: fill the parcel number → "kliknij Znajdź" → "Klikam Znajdź." → effect read back. The "Szukaj becomes enabled" check is dropped. "kliknij Szukaj" serves as the negative test: the hidden/disabled mobile search button must be rejected (ACT-04), and the header link to /szukaj exercises the D-05 navigation handoff.
+- **D-23:** The spoken element name in templates (D-04) is the **placeholder if present, otherwise the accessible name**. On InPost the label is in English but the placeholder is Polish.
+- **D-24:** Phase 1 **fails closed** on irreversible actions. If the model sets `needs_confirmation`, or the target matches the extension-side irreversible-action regex (pay/send/delete/consent/submit outside the tracking form), the action is not executed. The user hears one sentence, e.g. "Tej akcji nie wykonam bez potwierdzenia." Phase 2 replaces this with the "tak" flow.
+- **D-25:** Add a local **`tracking-form.html` fixture** served by the proxy (next to `sensitive.html`). It mimics the InPost tracking form (input, submit button, a disabled hidden button, a delayed XHR-like result render), so criteria 2–3 and settle/diff can be tested offline on Linux.
+
 ### Claude's Discretion
 - Exact diff algorithm and how the diff is serialized for the effect call.
 - Proxy route names other than `/api/transcribe`, the port number, and the request/response JSON field names.

@@ -27,13 +27,12 @@ A blind user can say a Polish voice command on a real Polish site and hear, thro
 - [ ] Agent never types passwords, SMS/BLIK codes, or solves captcha. It stops, says why, and suggests human help
 - [ ] Agent asks instead of guessing when the target element is ambiguous
 - [ ] After every action the agent re-reads page state and announces the effect ("Klikam Sprawdź." → "Paczka jest w drodze, …")
-- [ ] Announcements go through an ARIA live region (the user's screen reader voice); browser `speechSynthesis` (pl-PL) is the fallback
+- [ ] Announcements go through an ARIA live region (the user's screen reader voice); `chrome.tts` (pl-PL) is the fallback
 - [ ] Barge-in: "stop" or a shortcut immediately stops speech and actions
 - [ ] Short, distinct, toggleable earcons for routine states (working, done, needs confirmation)
 - [ ] Extension UI (enable, settings, errors) is fully usable by keyboard and screen reader
 - [ ] Small backend proxy holds the OpenRouter API key and forwards LLM and transcription requests; no keys in the extension or repo
 - [ ] Demo scenario works end-to-end: "sprawdź status przesyłki numer …" on InPost tracking → status read back
-- [ ] Plan B for demo: local mock of the InPost tracking page and/or canned responses for weak internet
 
 ### Out of Scope
 
@@ -42,7 +41,8 @@ A blind user can say a Polish voice command on a real Polish site and hear, thro
 - Be My Eyes integration for captcha — agent just stops and asks for human help
 - Fully local/offline AI — cloud model via OpenRouter is enough for the demo
 - Implementing Whisper transcription ourselves — owned by another team member; we only integrate
-- Custom high-quality TTS (ElevenLabs/Azure) — screen reader via ARIA live is the primary voice, `speechSynthesis` is the fallback
+- Custom high-quality TTS (ElevenLabs/Azure) — screen reader via ARIA live is the primary voice, `chrome.tts` is the fallback
+- Demo Plan B (InPost mock page, canned/offline responses, backup recording) — team prepares the demo separately; this project builds the app only
 - Other demo scenarios (e-urząd, banking, shopping) — one polished scenario beats several shaky ones
 - Logging page content or user commands — privacy; only local debug, off by default
 
@@ -64,7 +64,8 @@ A blind user can say a Polish voice command on a real Polish site and hear, thro
 
 - **Language**: Code, identifiers, technical comments, and commits in **English**. All user-facing messages (voice and UI) in **Polish**. Confirmed by user at initialization.
 - **Timeline**: ~24h hackathon, 2–3 developers. Vertical slice first (voice → action → effect), polish later.
-- **Platform**: Chrome extension, Manifest V3 (content script + service worker).
+- **Platform**: Chrome extension, Manifest V3 (content script + service worker + offscreen document).
+- **Tech stack**: Extension in **TypeScript** (esbuild build, no framework). Backend proxy in **Python** (FastAPI + httpx). Python cannot run inside a Chrome extension, so it is used for the proxy only.
 - **Dependencies**: Add none without a clear reason. Every dependency is a hackathon risk.
 - **Security**: No API keys in extension code or repo; keys live in the backend proxy via environment variables.
 - **Privacy**: Send the model the minimum (accessibility tree / simplified DOM). Screenshots only if unavoidable and with sensitive fields masked.
@@ -79,11 +80,13 @@ A blind user can say a Polish voice command on a real Polish site and hear, thro
 | Small backend proxy holds API key | CLAUDE.md rule: no keys in the extension | — Pending |
 | OpenRouter for everything (LLM + Whisper) | One API and one key; Whisper already planned via OpenRouter by teammate | — Pending |
 | STT: Whisper (teammate's module); we record audio, they transcribe | Better Polish quality; split work across team | — Pending |
-| Fallback TTS: browser `speechSynthesis` (pl-PL) | Zero dependencies, works offline | — Pending |
+| Fallback TTS: `chrome.tts` (pl-PL) instead of `speechSynthesis` | Works from service worker, has `stop()` for barge-in, explicit language; changed after research | — Pending |
 | Primary voice output: ARIA live region | Uses the user's screen reader voice (differentiator #3) | — Pending |
 | Accessibility tree / simplified DOM over screenshots | Privacy + fewer tokens | — Pending |
 | Model proposes structured actions; extension validates and executes | Enforces confirmation of irreversible actions and the sensitive-data rules | — Pending |
 | Code in English, user messages in Polish | User instruction at init | ✓ Good |
+| Extension in TypeScript, proxy in Python (FastAPI) | User prefers Python; Python can't run in MV3 extension, TS gives typed protocol/action schema | — Pending |
+| Demo Plan B out of project scope | Team prepares demo separately | — Pending |
 
 ## Evolution
 

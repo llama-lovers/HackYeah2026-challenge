@@ -13,7 +13,7 @@ test('captcha action requests and captcha-labelled targets are recognised after 
   assert.equal(s.isCaptchaLabel('Znajdź'),false);
 });
 test('secret content stays local across Polish changes, SMS descriptions and assignments', () => {
-  for (const text of ['ustaw hasło Tajne123', 'zmień PIN na 1234', 'wpisz kod z wiadomości SMS 731904', 'hasło: Tajne123', 'hasło abcdef', 'mój PIN 1234', 'oto kod z otrzymanej wiadomości SMS: 731904', 'czy hasło Tajne123 jest poprawne']) assert.deepEqual(s.parseIntent(text), {kind:'secret_request'}, text);
+  for (const text of ['czy możesz wpisać hasło Sekret', 'czy możesz wprowadzić hasło Tajne', 'ustaw hasło Tajne123', 'zmień PIN na 1234', 'wpisz kod z wiadomości SMS 731904', 'hasło: Tajne123', 'hasło abcdef', 'mój PIN 1234', 'oto kod z otrzymanej wiadomości SMS: 731904', 'czy hasło Tajne123 jest poprawne']) assert.deepEqual(s.parseIntent(text), {kind:'secret_request'}, text);
   for (const text of ['gdzie jest pole hasła', 'gdzie zmienić hasło', 'jak ustawić PIN', 'kliknij Zmień hasło', 'otwórz ustawienia hasła', 'co to jest kod z wiadomości SMS']) assert.deepEqual(s.parseIntent(text), {kind:'other'}, text);
 });
 test('tracking intent is anchored and retains the number', () => {

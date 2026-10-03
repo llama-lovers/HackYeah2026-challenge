@@ -367,7 +367,7 @@ test('missing parcel status reports the captcha instead of generic failure', asy
 test('secret variants never leave the browser or consume a pending dialog (CR-01)', async () => {
   const pending = actionPending();
   for (const keepPending of [false, true]) {
-  for (const text of ['ustaw hasło Tajne123', 'zmień PIN na 1234', 'wpisz kod z wiadomości SMS 731904', 'hasło: Tajne123', 'hasło abcdef', 'oto kod z otrzymanej wiadomości SMS: 731904']) {
+  for (const text of ['czy możesz wpisać hasło Sekret', 'czy możesz wprowadzić hasło Tajne', 'ustaw hasło Tajne123', 'zmień PIN na 1234', 'wpisz kod z wiadomości SMS 731904', 'hasło: Tajne123', 'hasło abcdef', 'oto kod z otrzymanej wiadomości SMS: 731904']) {
     if (keepPending) store.set('pending', pending); else store.delete('pending');
     tabCalls.length = 0;
     let fetches = 0;
@@ -378,7 +378,7 @@ test('secret variants never leave the browser or consume a pending dialog (CR-01
     assert(!tabCalls.some(c => ['SNAPSHOT','EXECUTE'].includes(c.message.type)), text);
     assert.deepEqual(store.get('pending'), keepPending ? pending : undefined, text);
     assert(announced().includes('Nie wpisuję haseł, kodów z SMS i BLIK ani innych danych poufnych. Wpisz je samodzielnie albo poproś o pomoc zaufaną osobę.'));
-    assert(!announced().some(t => /Tajne123|731904|1234|abcdef/.test(t)), text);
+    assert(!announced().some(t => /Sekret|Tajne|731904|1234|abcdef/.test(t)), text);
   }
   }
 });

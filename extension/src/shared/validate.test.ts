@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateProposal } from './validate.ts';
+import * as validation from './validate.ts';
 import type { Proposal, ResolvedTarget, RejectReason } from './validate.ts';
 const proposal: Proposal = { action: 'click', target: 'e1', text: '', needs_confirmation: false, say: '' };
 const target: ResolvedTarget = { exists: true, epochMatches: true, connected: true, visible: true, disabled: false, role: 'button', sensitive: false, name: 'Znajdź', maxLength: null, submitsNonLookupForm: false, sideEffectSignals: false, knownSafe: true, drifted: false };
@@ -42,4 +43,17 @@ test('refuses clicks without a positive safe classification (CR-03)', () => {
 });
 test('refuses a control whose semantic identity drifted since the snapshot (CR-09)', () => {
   for (const action of ['click', 'fill']) assert.deepEqual(validateProposal({ ...proposal, action, text: 'x' }, { ...target, role: action === 'click' ? 'button' : 'textbox', drifted: true }), { ok: false, reason: 'stale' });
+});
+test('confirmation permits irreversible and model-flagged actions only', () => {
+  const validate = validateProposal as any;
+  assert.deepEqual(validate(proposal, { ...target, name: 'Zapłać' }, { confirmed: true }), { ok: true, kind: 'click' });
+  assert.deepEqual(validate({ ...proposal, needs_confirmation: true }, target, { confirmed: true }), { ok: true, kind: 'click' });
+  for (const [reason, p, t] of [...cases.filter(c => !['needs_confirmation', 'irreversible'].includes(c[0])), ['stale', {}, { drifted: true }] as const]) {
+    assert.deepEqual(validate({ ...proposal, ...p }, t === null ? null : { ...target, ...t }, { confirmed: true }), { ok: false, reason });
+  }
+});
+test('only the two policy rejections are confirmable', () => {
+  const check = (validation as any).isConfirmable;
+  for (const reason of ['needs_confirmation', 'irreversible']) assert.equal(check?.(reason), true);
+  for (const reason of ['stale', 'hidden', 'disabled', 'sensitive_fill', 'not_found']) assert.equal(check(reason), false);
 });

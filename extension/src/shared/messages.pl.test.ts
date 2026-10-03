@@ -13,7 +13,13 @@ test('announces validated actions and unchanged effects in exact Polish', () => 
 test('every rejection is spoken and unsafe actions require confirmation', () => {
   const reasons: RejectReason[] = ['unknown_action', 'not_found', 'stale', 'hidden', 'disabled', 'role_mismatch', 'sensitive_fill', 'empty_text', 'too_long', 'needs_confirmation', 'irreversible', 'unconfirmed'];
   for (const reason of reasons) assert.match(m.rejectionText(reason), /.+\.$/u);
-  for (const reason of ['needs_confirmation', 'irreversible'] as const) assert.equal(m.rejectionText(reason), 'Tej akcji nie wykonam bez potwierdzenia.');
+  for (const reason of ['needs_confirmation', 'irreversible'] as const) assert.equal(m.rejectionText(reason), 'Tej akcji nie wykonam bez potwierdzenia. Powiedz polecenie jeszcze raz.');
+});
+test('confirmation prompt names the exact control without echoing typed text', () => {
+  const prompt = (m as any).confirmPrompt;
+  assert.equal(prompt?.('click', 'Zapłać', 'irreversible'), 'Chcę kliknąć „Zapłać”. Potwierdzasz? Powiedz tak albo nie.');
+  assert.equal(prompt('fill', 'Uwagi', 'model_flag'), 'Chcę wpisać tekst w pole „Uwagi”. Potwierdzasz? Powiedz tak albo nie.');
+  assert.equal(prompt('click', 'Zapłać', 'irreversible', 'za zamówienie'), 'Chcę kliknąć „Zapłać”, za zamówienie. Potwierdzasz? Powiedz tak albo nie.');
 });
 test('none response collapses whitespace, caps code points and supplies fallback', () => {
   assert.equal(m.noneSay(' '), 'Nie rozumiem polecenia. Powiedz je inaczej.');

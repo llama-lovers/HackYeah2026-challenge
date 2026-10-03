@@ -22,3 +22,9 @@ test('await number routes valid digits and bounds malformed replies', () => {
   assert.deepEqual(s.routeReply(p, '12345678', 60100), { kind: 'number', digits: '12345678' });
   assert.deepEqual(s.routeReply(p, '12345678', 60101), { kind: 'expired' });
 });
+test('action confirmation never restarts for a new parcel command', () => {
+  const p = { ...pending, kind: 'confirm_action' };
+  assert.deepEqual(s.routeReply(p, 'tak', 1100), { kind: 'confirm' });
+  assert.deepEqual(s.routeReply(p, 'nie', 1100), { kind: 'cancel' });
+  assert.deepEqual(s.routeReply(p, 'sprawdź status przesyłki 12345678', 1100), { kind: 'reprompt' });
+});

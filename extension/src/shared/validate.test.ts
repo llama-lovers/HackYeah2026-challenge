@@ -31,3 +31,9 @@ test('permits a precise 24-digit parcel fill and none without a target', () => {
   assert.deepEqual(validateProposal({ ...proposal, action: 'fill', text: '873234987612340872938732' }, { ...target, role: 'textbox', maxLength: 24 }), { ok: true, kind: 'fill' });
   assert.deepEqual(validateProposal({ ...proposal, action: 'none', target: '' }, null), { ok: true, kind: 'none' });
 });
+for (const name of ['Potwierdź płatność', 'Zapisz zmiany', 'Wyrażam zgodę na regulamin', 'Potwierdź zakup']) test(`rejects Polish side effect ${name}`, () => {
+  assert.deepEqual(validateProposal(proposal, { ...target, name }), { ok: false, reason: 'irreversible' });
+});
+test('rejects hidden side-effect signals reported by the content script', () => {
+  assert.deepEqual(validateProposal(proposal, { ...target, name: 'Dalej', sideEffectSignals: true }), { ok: false, reason: 'irreversible' });
+});

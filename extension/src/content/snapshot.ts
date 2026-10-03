@@ -2,6 +2,7 @@ import { MASK, maskText, isSensitiveField } from '../shared/mask.ts';
 import { MAX_NODES, MAX_TEXT, MAX_ALERT, collapse, truncate, stripQuery } from '../shared/snapshot-format.ts';
 import type { SnapNode, SnapState, Snapshot } from '../shared/snapshot-format.ts';
 import type { ResolvedTarget } from '../shared/validate.ts';
+import { IRREVERSIBLE_NAME_RE, SIDE_EFFECT_RE, LOOKUP_RE } from '../shared/validate.ts';
 import { LIVE_REGION_ID } from '../shared/protocol.ts';
 
 let epoch = 0;
@@ -183,12 +184,33 @@ export function takeSnapshot(doc: Document = document, opts?: { excludeRoot?: El
   epoch = snapshot.epoch; idMap = nextMap; last = snapshot;
   return snapshot;
 }
-function submitsNonLookupForm(el: Element): boolean {
-  if (!(el instanceof HTMLButtonElement || el instanceof HTMLInputElement) || !['submit', 'image'].includes(el.type) || !el.form) return false;
-  const form = el.form;
-  const method = (el.getAttribute('formmethod') ?? form.method).toLowerCase();
-  return !(method === 'get' || form.getAttribute('role') === 'search' || form.classList.contains('tracking-form'));
+// A form is a lookup only when positively identified by its fields and has no payment/consent/account signals;
+// page-controlled hints (method, class, role) alone never exempt it.
+function isLookupForm(form: HTMLFormElement, submitter: Element): boolean {
+  const method = (submitter.getAttribute('formmethod') ?? form.method).toLowerCase();
+  if (!(method === 'get' || form.getAttribute('role') === 'search' || form.classList.contains('tracking-form'))) return false;
+  const signals = [submitter.getAttribute('formaction') ?? form.action, form.id, form.getAttribute('name'), form.getAttribute('aria-label'), labelText(form)].join(' ');
+  if (IRREVERSIBLE_NAME_RE.test(signals) || SIDE_EFFECT_RE.test(signals)) return false;
+  const fields = Array.from(form.querySelectorAll('input,textarea,select')).filter(field => field.getAttribute('type') !== 'hidden');
+  if (fields.some(field => sensitive(field) || field.matches('[type=checkbox],[type=radio]'))) return false;
+  return fields.some(field => /przesył|parcel|shipment|search|szukaj|wyszuk|track/i.test([computeName(field), field.getAttribute('name'), field.id, field.getAttribute('placeholder'), field.getAttribute('type')].join(' ')));
 }
+// Any control inside (or submitting) a form that is not a positively identified lookup is treated as possibly irreversible.
+function submitsNonLookupForm(el: Element): boolean {
+  const control = el instanceof HTMLButtonElement || el instanceof HTMLInputElement ? el : null;
+  const form = control?.form ?? el.closest('form');
+  if (!form) return false;
+  if (!isLookupForm(form, el)) return true;
+  return !!control && ['submit', 'image'].includes(control.type) && !LOOKUP_RE.test(collapse(computeName(el)));
+}
+// Payment, account-change and consent wording in any label of the control or in its destination (link path, form action).
+function sideEffectSignals(el: Element): boolean {
+  const texts = [computeName(el), visibleText(el), el.getAttribute('aria-label'), el.getAttribute('title'), el.getAttribute('formaction')];
+  if (el instanceof HTMLInputElement) texts.push(el.value);
+  if (el instanceof HTMLAnchorElement) texts.push(safeDecode(el.pathname));
+  return texts.some(text => !!text && (IRREVERSIBLE_NAME_RE.test(text) || SIDE_EFFECT_RE.test(text)));
+}
+function safeDecode(text: string): string { try { return decodeURIComponent(text); } catch { return text; } }
 export function resolveTarget(id: string, requestedEpoch: number): { target: ResolvedTarget | null; element: Element | null; node: SnapNode | null } {
   const entry = idMap.get(id), element = entry?.ref.deref() ?? null;
   if (!entry || !element) return { target: null, element: null, node: null };
@@ -197,6 +219,6 @@ export function resolveTarget(id: string, requestedEpoch: number): { target: Res
   const maxLength = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.maxLength : -1;
   return { element, node, target: { exists: true, epochMatches: requestedEpoch === epoch, connected: element.isConnected,
     visible: isElementVisible(element), disabled: isElementDisabled(element), role, sensitive: !!(entry.node.state?.sensitive || liveState.sensitive), name,
-    maxLength: maxLength >= 0 ? maxLength : null, submitsNonLookupForm: submitsNonLookupForm(element) } };
+    maxLength: maxLength >= 0 ? maxLength : null, submitsNonLookupForm: submitsNonLookupForm(element), sideEffectSignals: sideEffectSignals(element) } };
 }
 export function getLastSnapshot(): Snapshot | null { return last; }

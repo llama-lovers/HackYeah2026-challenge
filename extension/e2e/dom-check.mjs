@@ -101,6 +101,12 @@ try {
   const structural = await page.evaluate(`__snapTest.takeSnapshot()`);
   for (const name of ['Szukaj przez contents', 'Znajdź pozycjonowany', 'Szukaj shadow', 'Znajdź live', 'Szukaj nagłówek', 'Numer przesyłki']) assert.ok(structural.nodes.some(n => n.kind === 'interactive' && n.name === name), 'missing descendant ' + name);
   console.log('PASS dom-check: structural containers retain visible controls');
+  await page.evaluate(`document.body.innerHTML='<button type="button">Potwierdź płatność</button><button>Zapisz zmiany</button><button aria-label="Dalej">Zapłać za zamówienie</button><label><input type="checkbox">Wyrażam zgodę na regulamin</label><form method="get" role="search" class="tracking-form"><input placeholder="Numer karty"><button>Szukaj</button></form><form method="get"><input placeholder="Numer przesyłki"><button>Wyślij</button></form><form method="post" action="/payment"><input placeholder="Numer przesyłki"><button>Szukaj</button></form><form method="get"><input placeholder="Numer przesyłki"><button>Dalej</button></form><a href="/checkout/confirm">Dalej</a><button type="button">Pokaż mapę</button><form method="get" class="tracking-form"><input placeholder="Numer przesyłki"><button>Znajdź</button></form>'`);
+  const policies = await page.evaluate(`(() => { const s=__snapTest.takeSnapshot();return s.nodes.filter(n=>n.kind==='interactive'&&['button','checkbox','link'].includes(n.role)).map((n,i)=>({i,name:n.name,verdict:__snapTest.validateProposal({action:'click',target:n.id,text:'',needs_confirmation:false,say:''},__snapTest.resolveTarget(n.id,s.epoch).target)})); })()`);
+  assert.equal(policies.length, 11);
+  // Everything is refused except the two positively identified harmless controls (a JS "Pokaż mapę" button and the tracking-form "Znajdź").
+  for (const { i, name, verdict } of policies) assert.deepEqual(verdict, [9, 10].includes(i) ? { ok: true, kind: 'click' } : { ok: false, reason: 'irreversible' }, `policy ${i} ${name}`);
+  console.log('PASS dom-check: Polish effects, consent, disguised forms and uncertain clicks');
 } catch (error) {
   console.error(`FAIL dom-check: ${error.stack}\n${lastText}`); process.exitCode = 1;
 } finally {

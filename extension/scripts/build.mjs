@@ -12,10 +12,12 @@ const common = { absWorkingDir: root, outdir, bundle: true, target: 'es2022', pl
   define: { __PROXY_URL__: JSON.stringify(proxy), __E2E__: process.env.E2E === '1' ? 'true' : 'false' } };
 await Promise.all([
   build({ ...common, entryPoints: { 'background/sw': 'src/background/index.ts' }, format: 'esm' }),
-  build({ ...common, entryPoints: { 'content/content': 'src/content/index.ts', 'offscreen/offscreen': 'src/offscreen/offscreen.ts' }, format: 'iife' }),
+  build({ ...common, entryPoints: { 'content/content': 'src/content/index.ts', 'offscreen/offscreen': 'src/offscreen/offscreen.ts', 'options/options': 'src/options/options.ts' }, format: 'iife' }),
 ]);
 await mkdir(resolve(outdir, 'offscreen'), { recursive: true });
 await cp(resolve(root, 'static/offscreen.html'), resolve(outdir, 'offscreen/offscreen.html'));
+await mkdir(resolve(outdir, 'options'), { recursive: true });
+await cp(resolve(root, 'static/options.html'), resolve(outdir, 'options/options.html'));
 const manifest = (await readFile(resolve(root, 'static/manifest.json'), 'utf8')).replaceAll('__PROXY_ORIGIN__', new URL(proxy).origin);
 if (manifest.includes('__PROXY_ORIGIN__')) throw new Error('Unresolved proxy origin');
 await writeFile(resolve(outdir, 'manifest.json'), manifest);

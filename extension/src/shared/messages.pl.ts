@@ -8,6 +8,11 @@ export const ONLY_INPOST = 'Agent działa na razie tylko na stronie InPost.';
 export const RELOAD_PAGE = 'Odśwież stronę i spróbuj jeszcze raz.';
 export const MIC_DENIED = 'Brak dostępu do mikrofonu. Otwieram ustawienia wtyczki.';
 export const MIC_NO_DEVICE = 'Nie znalazłem mikrofonu. Podłącz mikrofon i spróbuj jeszcze raz.';
+export const OPTIONS_MIC_GRANTED = 'Mikrofon włączony. Możesz zamknąć tę kartę i nacisnąć skrót na stronie InPost.';
+export const OPTIONS_MIC_BLOCKED = 'Dostęp do mikrofonu jest zablokowany. Włącz go w ustawieniach Chrome: chrome://settings/content/microphone, a potem naciśnij przycisk jeszcze raz.';
+export const OPTIONS_MIC_NO_DEVICE = MIC_NO_DEVICE;
+export function optionsShortcut(key: string): string { return `Skrót nagrywania: ${key}. Zmienisz go na stronie chrome://extensions/shortcuts.`; }
+export const OPTIONS_SHORTCUT_MISSING = 'Skrót nagrywania nie jest ustawiony. Ustaw go na stronie chrome://extensions/shortcuts.';
 export const STT_FAILED = 'Nie udało się rozpoznać mowy. Spróbuj jeszcze raz.';
 export const ASSISTANT_FAILED = 'Nie udało się połączyć z asystentem. Spróbuj jeszcze raz za chwilę.';
 export const SNAPSHOT_FAILED = 'Nie mogę bezpiecznie odczytać tej strony.';

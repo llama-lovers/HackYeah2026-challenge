@@ -6,6 +6,9 @@ chrome.commands.onCommand.addListener((command, tab) => {
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (sender.id === chrome.runtime.id && isFromOffscreen(message)) void handleOffscreenMessage(message);
 });
+chrome.runtime.onInstalled.addListener(details => {
+  if (details.reason === 'install') void chrome.runtime.openOptionsPage();
+});
 if (__E2E__) {
   Object.assign(globalThis, { __voiceAgentTest: {
     async toggle(opts?: { stubText?: string }) {

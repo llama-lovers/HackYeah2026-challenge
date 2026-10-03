@@ -261,9 +261,10 @@ function safeSideEffectSignals(el: Element): boolean { try { return sideEffectSi
 const CONSENT_CONTAINER_SELECTOR = '#didomi-host, [id^="didomi-"], [class*="didomi-"], #onetrust-banner-sdk, #onetrust-consent-sdk, #CybotCookiebotDialog';
 function consentSignal(el: Element): boolean {
   try {
-    if (closestOf(el, CONSENT_CONTAINER_SELECTOR)) return true;
-    for (let dialog = closestOf(el, '[role="dialog"], [role="alertdialog"], dialog'); dialog; dialog = parentOf(dialog) ? closestOf(parentOf(dialog)!, '[role="dialog"], [role="alertdialog"], dialog') : null) {
-      const text = [getAttr(dialog, 'aria-label'), computeName(dialog), labelText(dialog).slice(0, 300)].join(' ').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').replace(/ł/g, 'l');
+    for (let ancestor: Element | null = el; ancestor; ancestor = parentElement(ancestor)) {
+      if (matchesSel(ancestor, CONSENT_CONTAINER_SELECTOR)) return true;
+      if (!matchesSel(ancestor, '[role="dialog"], [role="alertdialog"], dialog')) continue;
+      const text = [getAttr(ancestor, 'aria-label'), computeName(ancestor), labelText(ancestor).slice(0, 300)].join(' ').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').replace(/ł/g, 'l');
       if (/cookie|ciasteczk|zgod|prywatnosc|privacy|consent/.test(text)) return true;
     }
     return false;

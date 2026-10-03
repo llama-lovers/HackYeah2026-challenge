@@ -199,6 +199,26 @@ try {
     assert.deepEqual(entry.confirmed, { ok: true, kind: 'click' }, name);
   }
   console.log('PASS dom-check: consent containers protect all controls and preserve parcel lookup');
+  for (const container of ['cmp', 'outerDialog', 'plain']) {
+    const shadowConsent = await page.evaluate(`(async () => {
+      const kind=${JSON.stringify(container)};
+      document.body.innerHTML=kind==='outerDialog' ? '<div role="dialog" aria-label="Ustawienia cookies"><div id="shadow"></div></div><div id="host"></div>' : '<div id="'+(kind==='cmp'?'didomi-host':'shadow')+'"></div><div id="host"></div>';
+      const root=document.querySelector(kind==='cmp'?'#didomi-host':'#shadow').attachShadow({mode:'open'});
+      root.innerHTML='<div id="inner"></div>';
+      const nested=root.querySelector('#inner').attachShadow({mode:'open'});
+      nested.innerHTML='<button type="button">Zamknij</button>';
+      let clicks=0; nested.querySelector('button').onclick=()=>clicks++;
+      const s=__snapTest.takeSnapshot(),id=s.nodes.find(n=>n.name==='Zamknij').id;
+      const p={action:'click',target:id,text:'',needs_confirmation:false,say:''};
+      const target=__snapTest.resolveTarget(id,s.epoch).target;
+      const result=await __snapTest.execute(s.epoch,p,{host:document.querySelector('#host'),announce(){}});
+      return {consent:target.consent,result,clicks};
+    })()`);
+    assert.equal(shadowConsent.consent, container !== 'plain', container);
+    if (container === 'plain') { assert.equal(shadowConsent.result.ok,true); assert.equal(shadowConsent.clicks,1); }
+    else { assert.equal(shadowConsent.result.reason,'irreversible'); assert.equal(shadowConsent.result.confirm.category,'consent'); assert.equal(shadowConsent.clicks,0); }
+  }
+  console.log('PASS dom-check: nested shadow CMP and outer cookie dialogs require informed confirmation');
   const captchaBundle = await bundleForPage(`import {detectCaptcha,waitForParcelStatus} from './src/content/tracking.ts';globalThis.__captchaTest={detectCaptcha,waitForParcelStatus};`, EXT_DIR);
   await page.goto(server.origin + '/fixtures/tracking-form.html'); await page.evaluate(captchaBundle);
   const captchaCases = await page.evaluate(`(async () => {

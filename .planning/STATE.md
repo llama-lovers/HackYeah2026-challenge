@@ -1,11 +1,18 @@
 ---
-gsd_state_version: '1.0'
-status: planning
+gsd_state_version: "1.0"
+current_phase: 01
+current_phase_name: Voice-to-Effect Vertical Slice
+status: verifying
+stopped_at: Completed 01-04-PLAN.md; phase verification and genuine human UAT pending
+last_updated: "2026-10-03T14:36:22.367Z"
+last_activity: 2026-10-03
+last_activity_desc: Phase 01 execution started
+state_head: c012fdbfe1a2ef1d9a7f695c9251050cc28ee8ce
 progress:
   total_phases: 4
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_plans: 4
+  completed_plans: 4
   percent: 0
 ---
 
@@ -16,14 +23,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-03)
 
 **Core value:** A blind user can say a Polish voice command on a real Polish site and hear, through their own screen reader, a short confirmation of what the agent did and what actually happened. Sensitive data never leaves the browser.
-**Current focus:** Phase 1: Voice-to-Effect Vertical Slice
+**Current focus:** Phase 01 — Voice-to-Effect Vertical Slice
 
 ## Current Position
 
-Phase: 1 of 4 (Voice-to-Effect Vertical Slice)
-Plan: 0 of TBD in current phase
-Status: Ready to plan
-Last activity: 2026-10-03 — Roadmap created (4 phases, 38/38 v1 requirements mapped)
+Phase: 01 (Voice-to-Effect Vertical Slice) — VERIFYING
+Plan: 4 of 4
+Status: Implementation complete — phase verification and genuine human UAT pending
+Last activity: 2026-10-03 — Phase 01 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -45,6 +52,14 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: -
 
 *Updated after each plan completion*
+**Per-Plan Metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 01 P01 | 19 min | 3 tasks | 16 files |
+| Phase 01 P02 | 19 min | 3 tasks | 25 files |
+| Phase 01 P03 | 20 min | 3 tasks | 22 files |
+| Phase 01 P04 | 22 min | 3 tasks | 17 files |
 
 ## Accumulated Context
 
@@ -58,6 +73,13 @@ Recent decisions affecting current work:
 - [Init]: Demo Plan B (mock page, canned responses) is out of scope; the team handles the demo
 - [Roadmap]: Risk spikes live inside Phase 1's vertical slice, not a standalone phase
 - [Roadmap]: Demo-critical path is Phases 1–2; Phase 3 depends only on Phase 1 and can run in parallel with Phase 2
+- [Phase 01]: Use the same-checkout phase branch to satisfy the mandatory protected-branch commit guard while preserving existing edits.
+- [Phase 01]: Validate complete bounded uploads before route execution so oversized chunked JSON prefixes cannot spend upstream credit.
+- [Phase 01]: Recheck live role, name and sensitive-field signals before action execution so page mutations cannot bypass policy.
+- [Phase 01]: Numeric-secret acceptance uses complete digit tokens because the invalid PESEL test value prefixes a required parcel positive control.
+- [Phase 01]: Revalidate every live policy signal after the pre-action delay before acting.
+- [Phase 01]: Restrict build cleanup to dist and dist-e2e to prevent OUT_DIR deleting source or unrelated files.
+- [Phase 01]: Await the queued live-region text write before the pre-action delay to preserve pre-announcements across navigation.
 
 ### Pending Todos
 
@@ -80,6 +102,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-03
-Stopped at: Roadmap created, awaiting approval
+Last session: 2026-10-03T14:36:22.324Z
+Stopped at: Completed 01-04-PLAN.md; phase verification and genuine human UAT pending
 Resume file: None

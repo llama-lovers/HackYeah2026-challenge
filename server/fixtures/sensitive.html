@@ -1,0 +1,16 @@
+<!doctype html><html lang="pl"><head><meta charset="utf-8"><title>Płatność testowa (fixture)</title></head><body>
+<main><h1>Dane do płatności</h1><form method="post" action="#">
+<p><label>E-mail <input type="email" value="jan@example.com"></label></p>
+<p><label>Hasło <input type="password" value="Tajne!Haslo1"></label></p>
+<p><label>Numer PESEL <input value="44051401359"></label></p>
+<p><label>PESEL współmałżonka <input value="12345678901"></label></p>
+<p><label>Numer konta (IBAN) <input value="PL61 1090 1014 0000 0712 1981 2874"></label></p>
+<p><label>Numer karty <input autocomplete="cc-number" value="4111 1111 1111 1111"></label></p>
+<p><label>CVV <input autocomplete="cc-csc" value="846"></label></p>
+<p><label>Kod SMS <input autocomplete="one-time-code" value="731904"></label></p>
+<p><label>Numer przesyłki <input id="ShipmentNumber" value="873234987612340872938732"></label></p>
+<button type="submit">Zapłać</button></form>
+<p>Twój PESEL: 44051401359. Konto: PL61 1090 1014 0000 0712 1981 2874. Karta 4111111111111111.</p>
+<p>Przesyłka 123456789012345678901234 w drodze.</p></main>
+<script>document.querySelector('form').addEventListener('submit', e => { e.preventDefault(); window.__paid=true; const p=document.createElement('p'); p.textContent='Zapłacono'; document.body.append(p); });</script>
+</body></html>

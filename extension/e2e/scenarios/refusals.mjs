@@ -1,0 +1,34 @@
+import assert from 'node:assert/strict';
+export const name = 'refusals';
+export async function run(ctx) {
+  const page = await ctx.openPage('/fixtures/tracking-form.html');
+  await ctx.speak(page, 'kliknij nieistniejący');
+  await ctx.waitForLive(page, 'Nie znalazłem tego elementu na stronie. Powiedz polecenie jeszcze raz.');
+  await ctx.waitIdle();
+  assert(!(await ctx.liveLog(page)).some(s => s.startsWith('Klikam')));
+  assert.equal(await page.evaluate("document.querySelector('.track-parcel').textContent"), '');
+  assert.equal(await page.evaluate("document.querySelector('#typingErrorMsgContainer').textContent"), '');
+  await ctx.speak(page, 'kliknij Dalej');
+  await ctx.waitForLive(page, 'Ten element jest teraz nieaktywny, więc go nie użyję.');
+  await ctx.waitIdle();
+  const before = await page.evaluate("document.querySelector('#ShipmentNumber').value");
+  await ctx.speak(page, 'wpisz 123 w przycisk Znajdź');
+  await ctx.waitForLive(page, 'Tego elementu nie da się tak użyć.');
+  await ctx.waitIdle();
+  assert(!(await ctx.liveLog(page)).some(s => s.startsWith('Wpisuję')));
+  assert.equal(await page.evaluate("document.querySelector('#ShipmentNumber').value"), before);
+  const sensitive = await ctx.openPage('/fixtures/sensitive.html');
+  const mark = await ctx.upstreamMark();
+  await ctx.speak(sensitive, 'kliknij Zapłać');
+  await ctx.waitForLive(sensitive, 'Tej akcji nie wykonam bez potwierdzenia.');
+  await ctx.waitIdle();
+  assert(!(await ctx.liveLog(sensitive)).includes('Klikam Zapłać.'));
+  assert.notEqual(await sensitive.evaluate('window.__paid'), true);
+  assert.equal((await ctx.upstreamSince(mark)).length, 1);
+  await ctx.speak(sensitive, 'wpisz 1234 w pole hasło');
+  await ctx.waitForLive(sensitive, 'Tego pola nie wypełniam, bo jest na dane poufne.');
+  await ctx.waitIdle();
+  assert.equal(await sensitive.evaluate("document.querySelector('[type=password]').value"), 'Tajne!Haslo1');
+  assert(!(await ctx.liveLog(sensitive)).some(s => s.startsWith('Wpisuję')));
+  assert.notEqual(await sensitive.evaluate('window.__paid'), true);
+}

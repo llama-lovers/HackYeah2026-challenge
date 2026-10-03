@@ -1,0 +1,120 @@
+---
+schema_version: 1
+open_count: 7
+waived_count: 0
+fixed_count: 0
+total_count: 7
+last_updated: 2026-10-03T14:32:27.729Z
+---
+
+# Broken Windows Ledger
+
+> Cross-phase defect register. With `workflow.windows_enforce` enabled, `/gsd-ship` blocks while `open_count > 0`.
+> Waive with `gsd-tools windows waive <id> "<reason>"` (reason required).
+> Mark fixed with `gsd-tools windows fixed <id>`.
+
+| id | phase | kind | file | line | description | status | reason | recorded_at | resolved_at |
+|----|-------|------|------|------|-------------|--------|--------|-------------|-------------|
+| 1 | 01 | unrun-verify | server/app/openrouter.py |  | Live OpenRouter schema/latency/reasoning verification pending real API key | open |  | 2026-10-03T13:14:49.004Z |  |
+| 2 | 01 | unrun-verify | server/app/stt.py |  | Real Whisper audio/webm microphone smoke pending teammate module and API key | open |  | 2026-10-03T13:14:49.209Z |  |
+| 3 | 01 | stub | server/app/stt.py | 13 | Intentional D-13 STT stub; real Whisper module is teammate-owned and absent | open |  | 2026-10-03T13:14:49.448Z |  |
+| 4 | 01 | unrun-verify | extension/static/options.html |  | Clean-profile microphone grant and NVDA/VoiceOver live-region speech require the Windows/macOS end-of-phase human check. | open |  | 2026-10-03T14:03:33.014Z |  |
+| 5 | 01 | unrun-verify | extension/src/content/live-region.ts |  | NVDA/VoiceOver speech of ordered and identical consecutive messages in browse mode and with parcel-field focus is pending real screen-reader testing. | open |  | 2026-10-03T14:32:27.279Z |  |
+| 6 | 01 | unrun-verify | extension/e2e/scenarios/privacy.mjs |  | DevTools Network-tab masking proof on the sensitive fixture and live InPost parcel page is pending end-of-phase human review. | open |  | 2026-10-03T14:32:27.499Z |  |
+| 7 | 01 | unrun-verify | extension/src/background/pipeline.ts |  | Live InPost fill/search/navigation with real provider Polish effect quality and total latency is pending an API key and human review. | open |  | 2026-10-03T14:32:27.729Z |  |
+
+````json
+[
+  {
+    "id": 1,
+    "kind": "unrun-verify",
+    "phase": "01",
+    "file": "server/app/openrouter.py",
+    "line": null,
+    "description": "Live OpenRouter schema/latency/reasoning verification pending real API key",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-10-03T13:14:49.004Z",
+    "resolved_at": null,
+    "milestone": null
+  },
+  {
+    "id": 2,
+    "kind": "unrun-verify",
+    "phase": "01",
+    "file": "server/app/stt.py",
+    "line": null,
+    "description": "Real Whisper audio/webm microphone smoke pending teammate module and API key",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-10-03T13:14:49.209Z",
+    "resolved_at": null,
+    "milestone": null
+  },
+  {
+    "id": 3,
+    "kind": "stub",
+    "phase": "01",
+    "file": "server/app/stt.py",
+    "line": 13,
+    "description": "Intentional D-13 STT stub; real Whisper module is teammate-owned and absent",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-10-03T13:14:49.448Z",
+    "resolved_at": null,
+    "milestone": null
+  },
+  {
+    "id": 4,
+    "kind": "unrun-verify",
+    "phase": "01",
+    "file": "extension/static/options.html",
+    "line": null,
+    "description": "Clean-profile microphone grant and NVDA/VoiceOver live-region speech require the Windows/macOS end-of-phase human check.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-10-03T14:03:33.014Z",
+    "resolved_at": null,
+    "milestone": null
+  },
+  {
+    "id": 5,
+    "kind": "unrun-verify",
+    "phase": "01",
+    "file": "extension/src/content/live-region.ts",
+    "line": null,
+    "description": "NVDA/VoiceOver speech of ordered and identical consecutive messages in browse mode and with parcel-field focus is pending real screen-reader testing.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-10-03T14:32:27.279Z",
+    "resolved_at": null,
+    "milestone": null
+  },
+  {
+    "id": 6,
+    "kind": "unrun-verify",
+    "phase": "01",
+    "file": "extension/e2e/scenarios/privacy.mjs",
+    "line": null,
+    "description": "DevTools Network-tab masking proof on the sensitive fixture and live InPost parcel page is pending end-of-phase human review.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-10-03T14:32:27.499Z",
+    "resolved_at": null,
+    "milestone": null
+  },
+  {
+    "id": 7,
+    "kind": "unrun-verify",
+    "phase": "01",
+    "file": "extension/src/background/pipeline.ts",
+    "line": null,
+    "description": "Live InPost fill/search/navigation with real provider Polish effect quality and total latency is pending an API key and human review.",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-10-03T14:32:27.729Z",
+    "resolved_at": null,
+    "milestone": null
+  }
+]
+````

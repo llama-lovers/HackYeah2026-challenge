@@ -174,6 +174,24 @@ try {
     assert.deepEqual(entry.confirmed, { ok: true, kind: 'click' }, name);
   }
   console.log('PASS dom-check: consent containers protect all controls and preserve parcel lookup');
+  const captchaBundle = await bundleForPage(`import {detectCaptcha,waitForParcelStatus} from './src/content/tracking.ts';globalThis.__captchaTest={detectCaptcha,waitForParcelStatus};`, EXT_DIR);
+  await page.goto(server.origin + '/fixtures/tracking-form.html'); await page.evaluate(captchaBundle);
+  const captchaCases = await page.evaluate(`(async () => {
+    const checks=[];
+    checks.push(__captchaTest.detectCaptcha(document));
+    for(const [tag,attribute,value] of [['div','class','g-recaptcha'],['div','class','h-captcha'],['div','class','cf-turnstile'],['iframe','src','about:blank#recaptcha/api2/anchor'],['iframe','src','about:blank#hcaptcha.com'],['iframe','src','about:blank#challenges.cloudflare.com']]) {
+      const el=document.createElement(tag); el.setAttribute(attribute,value); el.style.cssText='position:fixed;top:10px;left:10px;width:304px;height:78px';document.body.append(el);
+      checks.push(__captchaTest.detectCaptcha(document)); el.remove();
+    }
+    const el=document.createElement('div');el.className='g-recaptcha';document.body.append(el);
+    for(const style of ['display:none;width:304px;height:78px','visibility:hidden;width:304px;height:78px','opacity:0;width:304px;height:78px','position:fixed;top:10000px;width:304px;height:78px','position:fixed;left:-10000px;width:304px;height:78px','position:fixed;top:10px;left:10px;width:0;height:0']) {el.style.cssText=style;checks.push(__captchaTest.detectCaptcha(document));}
+    el.style.cssText='position:fixed;top:10px;left:10px;width:304px;height:78px';
+    const missing=await __captchaTest.waitForParcelStatus(document,'12345678',0); el.remove();
+    return {checks,missing};
+  })()`);
+  assert.deepEqual(captchaCases.checks,[false,true,true,true,true,true,true,false,false,false,false,false,false]);
+  assert.deepEqual(captchaCases.missing,{ok:false,error:'not_found',captcha:true});
+  console.log('PASS dom-check: visible viewport captcha variants and missing-status flag');
 } catch (error) {
   console.error(`FAIL dom-check: ${error.stack}\n${lastText}`); process.exitCode = 1;
 } finally {

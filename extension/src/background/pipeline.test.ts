@@ -269,7 +269,7 @@ test('a rejected fill is counted and never followed by the search click', async 
   localAdapter(); tabHandler = (_tab, m) => m.type === 'SNAPSHOT' ? { ok: true, docId: 'doc-1', snapshot: { ...snapshot, nodes: [field, button] } } : m.type === 'EXECUTE' ? { ok: false, reason: 'sensitive_fill' } : { ok: true };
   const run = makeRun(); await pipeline.runParcelSearch(run, '12345678');
   assert.equal(run.budget.used, 1); assert.equal(tabCalls.filter(c => c.message.type === 'EXECUTE').length, 1);
-  assert.deepEqual(announced(), ['Tego pola nie wypełniam, bo jest na dane poufne.']);
+  assert.deepEqual(announced(), ['Tego pola nie wypełniam, bo jest na dane poufne. Wypełnij je samodzielnie albo poproś o pomoc zaufaną osobę.']);
 });
 test('model effect speaks amount and date while local navigation makes no fetch', async () => {
   withProposal(clickProposal, 'Do zapłaty 349 zł do 04.10.2026.');
@@ -322,7 +322,7 @@ test('secret and captcha utterances preserve pending dialogs and never snapshot 
   }
 });
 test('captcha names and hints refuse proposals including stored and chosen controls before EXECUTE', async () => {
-  const s={...snapshot,nodes:[{...button,name:'Nie jestem robotem'}]};
+  const s={...snapshot,nodes:[{...button,name:'Nie jestem robotem'},{...button,id:'e2',name:'Nie jestem robotem'}]};
   withProposal(clickProposal); tabHandler=(_tab,m)=>m.type==='SNAPSHOT'?{ok:true,docId:'doc',snapshot:s}:{ok:true};
   await localCommand('kliknij pierwszy'); assert(!tabCalls.some(c=>c.message.type==='EXECUTE')); assert.deepEqual(announced(),['Nie rozwiązuję zabezpieczeń captcha. Poproś o pomoc zaufaną osobę.']);
   tabCalls.length=0; const requests=localAdapter(); store.set('pending',actionPending({preSnapshot:s})); await localCommand('tak');
@@ -335,6 +335,13 @@ test('missing parcel status reports the captcha instead of generic failure', asy
   tabHandler=(_tab,m)=>m.type==='SNAPSHOT'?{ok:true,docId:'doc',snapshot:{...snapshot,nodes:[field,button]}}:m.type==='EXECUTE'?{ok:true,kind:m.proposal.action,name:'Znajdź',role:'button',diff:emptyDiff}:m.type==='READ_STATUS'?{ok:false,error:'not_found',captcha:true}:{ok:true};
   await pipeline.runParcelSearch(run,'12345678');
   assert.deepEqual(announced(),['Strona pokazuje zabezpieczenie captcha. Nie rozwiązuję go. Poproś o pomoc zaufaną osobę.']);
+});
+test('expired numbered choice never replans the reply or executes a stale selection', async () => {
+  const requests=localAdapter();
+  store.set('pending',{...actionPending({createdAt:Date.now()-61000}),kind:'choose_option',action:'click',text:'',needsConfirmation:false,options:[{id:'e1',name:'Usuń',role:'button'},{id:'e2',name:'Usuń',role:'button'}]});
+  await localCommand('dwa');
+  assert.deepEqual(announced(),['Minął czas na odpowiedź. Powiedz polecenie jeszcze raz.']);
+  assert.equal(store.has('pending'),false); assert(!tabCalls.some(c=>['SNAPSHOT','EXECUTE'].includes(c.message.type))); assert.deepEqual(requests,[]);
 });
 test('duplicate model target asks without execution then chooses stored target into contextual confirmation', async () => {
   const requests: string[] = [];

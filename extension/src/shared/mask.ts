@@ -46,7 +46,7 @@ export function maskText(t: string): string {
     });
 }
 export const SENSITIVE_AUTOCOMPLETE = new Set(['cc-number', 'cc-csc', 'cc-exp', 'cc-exp-month', 'cc-exp-year', 'one-time-code', 'current-password', 'new-password']);
-export const SENSITIVE_FIELD_RE = /pesel|iban|nrb|numer konta|nr konta|rachunek|cvv|cvc|kart[ayę]|karcie|card|blik|kod sms|sms code|kod jednorazowy|one-time|otp|hasło|haslo|password|(?<![\p{L}\p{N}])pin(?![\p{L}\p{N}])/iu;
+export const SENSITIVE_FIELD_RE = /pesel|iban|nrb|numer konta|nr konta|rachunek|cvv|cvc|kart[ayę]|karcie|card|blik|kod sms|sms code|kod jednorazowy|kod weryfikacyjn|kod autoryzacyjn|kod potwierdzaj|kod odbioru|kod dost[eę]pu|one-time|otp|hasło|haslo|password|(?<![\p{L}\p{N}])(?:pin|token)(?![\p{L}\p{N}])/iu;
 export function isSensitiveField(f: FieldSignals): boolean {
   return f.type?.toLowerCase() === 'password'
     || (f.autocomplete ?? '').toLowerCase().split(/\s+/).some(t => SENSITIVE_AUTOCOMPLETE.has(t))

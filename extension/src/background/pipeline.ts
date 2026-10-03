@@ -1,7 +1,7 @@
 import { SESSION_KEYS, PENDING_EFFECT_MAX_AGE_MS } from '../shared/protocol.ts';
 import type { FromOffscreen, SnapshotResult, ExecuteResult, ExecutedAction, EffectResponse, PendingEffectJob, SettleDiffResult, ReadStatusResult } from '../shared/protocol.ts';
 import type { PageDiff, Snapshot } from '../shared/snapshot-format.ts';
-import { parseIntent } from '../shared/intent.ts';
+import { parseIntent, isCaptchaLabel } from '../shared/intent.ts';
 import { wordsToDigits, digitsToSpokenGroups, speakable } from '../shared/polish-speech.ts';
 import { createBudget, takeStep } from '../shared/limits.ts';
 import type { StepBudget } from '../shared/limits.ts';
@@ -139,6 +139,10 @@ export async function performProposal(run: CommandRun, step: ProposalStep): Prom
   const { turnId, tabId, signal } = run, { proposal } = step;
   const say = async (text: string) => { if (await ownsTurn(turnId)) await announce(tabId, text); };
   if (!(await ownsTurn(turnId))) return 'stopped';
+  if (proposal.action === 'click' || proposal.action === 'fill') {
+    const node = step.preSnapshot.nodes.find(n => n.id === proposal.target);
+    if (node && (isCaptchaLabel(node.name) || isCaptchaLabel(node.hint ?? ''))) { await say(msg.CAPTCHA_REFUSAL); return 'stopped'; }
+  }
   let jobId = '';
   if (proposal.action === 'click' || proposal.action === 'fill') {
     const node = step.preSnapshot.nodes.find(n => n.id === proposal.target);
@@ -187,7 +191,7 @@ export async function runParcelSearch(run: CommandRun, digits: string): Promise<
     const click = await performProposal(run, { proposal: { action: 'click', target: search.id, text: '', needs_confirmation: false, say: '' }, epoch: result.snapshot.epoch, docId: result.docId, preSnapshot: result.snapshot, announce: 'none' });
     if (click !== 'done') return click === 'handoff' ? 'handoff' : undefined;
     const status: ReadStatusResult = await chrome.tabs.sendMessage(run.tabId, { type: 'READ_STATUS', number: digits }, { frameId: 0 });
-    await say(status.ok ? msg.statusSpeech(status.status) : msg.STATUS_UNREAD);
+    await say(status.ok ? msg.statusSpeech(status.status) : status.captcha ? msg.CAPTCHA_ON_PAGE : msg.STATUS_UNREAD);
   } catch { await say(msg.STATUS_UNREAD); }
 }
 async function parcelReadback(run: CommandRun, digits: string): Promise<void> {
@@ -206,8 +210,10 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
   const say = async (text: string) => { if (await ownsTurn(turnId)) await announce(tabId, text); };
   const text = rawText.trim();
   if (!text) { await say(msg.NOTHING_HEARD); return; }
-  const pending = await claimPending(turnId);
   const intent = parseIntent(text);
+  if (intent.kind === 'secret_request') { await say(msg.SECRET_REFUSAL); return; }
+  if (intent.kind === 'captcha_request') { await say(msg.CAPTCHA_REFUSAL); return; }
+  const pending = await claimPending(turnId);
   if (pending && pending.tabId === tabId) {
     const reply = routeReply(pending, text, Date.now());
     if (reply.kind === 'choose' && pending.kind === 'choose_option') {
@@ -224,7 +230,7 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
     if (reply.kind === 'reprompt') { await setPending(turnId, { ...pending, reprompts: pending.reprompts + 1 }); await say(pending.kind === 'choose_option' ? msg.choiceReprompt(pending.options.length) : msg.CONFIRM_REPROMPT); return; }
     if (reply.kind === 'number') return parcelReadback(run, reply.digits);
     if (reply.kind === 'bad_number') { await setPending(turnId, { ...pending, reprompts: pending.reprompts + 1 }); await say(reply.count === null ? msg.PARCEL_NOT_UNDERSTOOD : msg.parcelWrongLength(reply.count)); return; }
-    if (reply.kind === 'expired' && (intent.kind === 'yes' || intent.kind === 'no')) { await say(msg.CONFIRM_EXPIRED); return; }
+    if (reply.kind === 'expired' && (pending.kind === 'choose_option' || intent.kind === 'yes' || intent.kind === 'no')) { await say(msg.CONFIRM_EXPIRED); return; }
   }
   if (intent.kind === 'track_parcel') {
     if (tabId === undefined) { await say(msg.SNAPSHOT_FAILED); return; }
@@ -256,6 +262,8 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
     await say(msg.choicePrompt(options)); return;
   }
   if (proposal.action === 'click' || proposal.action === 'fill') {
+    const node = result.snapshot.nodes.find(n => n.id === proposal.target);
+    if (node && (isCaptchaLabel(node.name) || isCaptchaLabel(node.hint ?? ''))) { await say(msg.CAPTCHA_REFUSAL); return; }
     const options = duplicateOptions(result.snapshot, proposal.target);
     if (options.length >= 2) {
       await setPending(turnId, {kind:'choose_option',action:proposal.action,text:proposal.text,needsConfirmation:proposal.needs_confirmation,epoch:result.snapshot.epoch,docId:result.docId,preSnapshot:result.snapshot,options,id:crypto.randomUUID(),tabId:tabId!,createdAt:Date.now(),reprompts:0});

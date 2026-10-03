@@ -7,6 +7,9 @@ import { STATUS_SPOKEN_MAX } from './limits.ts';
 import { spellInteger, speakable } from './polish-speech.ts';
 import type { ChoiceOption } from './choice.ts';
 export const CHOICE_UNCLEAR = 'Nie jestem pewien, o który element chodzi. Powiedz polecenie dokładniej.';
+export const SECRET_REFUSAL = 'Nie wpisuję haseł, kodów z SMS i BLIK ani innych danych poufnych. Wpisz je samodzielnie albo poproś o pomoc zaufaną osobę.';
+export const CAPTCHA_REFUSAL = 'Nie rozwiązuję zabezpieczeń captcha. Poproś o pomoc zaufaną osobę.';
+export const CAPTCHA_ON_PAGE = 'Strona pokazuje zabezpieczenie captcha. Nie rozwiązuję go. Poproś o pomoc zaufaną osobę.';
 export function choicePrompt(options: ChoiceOption[]): string { return 'Pasuje kilka elementów. ' + options.map((o,i) => `${['Jeden','Dwa','Trzy'][i]}: ${o.name}${o.context ? ', ' + o.context : ''}.`).join(' ') + ' Który? Powiedz numer.'; }
 export function choiceReprompt(count: number): string { return count === 2 ? 'Powiedz jeden albo dwa.' : 'Powiedz jeden, dwa albo trzy.'; }
 export const STATUS_TRUNCATED_NOTE = 'Dalszy opis jest na stronie.';
@@ -68,7 +71,7 @@ const REJECTIONS: Record<RejectReason, string> = {
   hidden: 'Ten element jest teraz niewidoczny, więc go nie użyję.',
   disabled: 'Ten element jest teraz nieaktywny, więc go nie użyję.',
   role_mismatch: 'Tego elementu nie da się tak użyć.',
-  sensitive_fill: 'Tego pola nie wypełniam, bo jest na dane poufne.',
+  sensitive_fill: 'Tego pola nie wypełniam, bo jest na dane poufne. Wypełnij je samodzielnie albo poproś o pomoc zaufaną osobę.',
   empty_text: 'Nie usłyszałem, co mam wpisać. Powiedz polecenie jeszcze raz.',
   too_long: 'Ten tekst jest za długi dla tego pola.',
   unknown_action: 'Nie umiem jeszcze tego zrobić.',

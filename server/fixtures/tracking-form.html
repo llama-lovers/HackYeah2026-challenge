@@ -31,6 +31,9 @@ document.querySelector('.tracking-form').addEventListener('submit', e => {
   result.innerHTML='<div class="loader" role="progressbar" aria-busy="true">Ładowanie…</div>';
   setTimeout(() => {
     result.replaceChildren();
+    if (n === '111111111111111111111111') {
+      const captcha = document.createElement('div'); captcha.className='g-recaptcha'; captcha.dataset.sitekey='fixture'; captcha.style.cssText='width:304px;height:78px;border:1px solid #888'; captcha.textContent='Potwierdź, że nie jesteś robotem'; result.append(captcha); return;
+    }
     const wrapper = document.createElement('div'); wrapper.className='parcel-wrapper'; wrapper.setAttribute('data-tracking', n);
     const section = document.createElement('div'); section.className='parcel-section';
     const info = document.createElement('div'); info.className='parcelStatusInfo';

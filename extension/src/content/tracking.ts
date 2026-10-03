@@ -1,6 +1,14 @@
 import { collapse } from '../shared/snapshot-format.ts';
 import { READ_STATUS_CAP_MS } from '../shared/limits.ts';
 import type { ParcelStatus, ReadStatusResult } from '../shared/protocol.ts';
+export function detectCaptcha(doc: Document): boolean {
+  const view = doc.defaultView;
+  if (!view) return false;
+  return Array.from(doc.querySelectorAll('.g-recaptcha, .h-captcha, .cf-turnstile, iframe[src*="recaptcha/api2/anchor"], iframe[src*="hcaptcha.com"], iframe[src*="challenges.cloudflare.com"]')).some(el => {
+    const box = el.getBoundingClientRect();
+    return el.checkVisibility({checkOpacity:true,checkVisibilityCSS:true}) && box.width > 0 && box.height > 0 && box.bottom > 0 && box.right > 0 && box.top < view.innerHeight && box.left < view.innerWidth;
+  });
+}
 export function readParcelStatus(doc: Document, digits: string): ParcelStatus | null {
   const wrapper = Array.from(doc.querySelectorAll('.parcel-wrapper')).find(el => el.getAttribute('data-tracking') === digits);
   if (!wrapper) return null;
@@ -19,5 +27,5 @@ export async function waitForParcelStatus(doc: Document, digits: string, capMs =
   } while (Date.now() - start < capMs);
   const description = collapse(doc.querySelector('#typingErrorMsgContainer')?.textContent ?? '');
   if (description) return { ok: true, status: { kind: 'error', title: '', description } };
-  return { ok: false, error: 'not_found' };
+  return { ok: false, error: 'not_found', captcha: detectCaptcha(doc) };
 }

@@ -132,3 +132,9 @@ def test_missing_key_is_a_safe_503():
     with make_client(lambda request: pytest.fail("unexpected upstream"), openrouter_api_key=None) as client:
         result = client.post("/api/explore", json=SUMMARY_BODY)
     assert result.status_code == 503 and result.json() == {"error": "no_api_key"}
+
+
+def test_exploration_tiers_keep_summaries_to_two_sentences_and_caps_three_four_five():
+    assert ACTION_CAPS == {"concise": 3, "standard": 4, "detailed": 5}
+    from app.exploration import MAX_SENTENCES
+    assert MAX_SENTENCES == 2

@@ -1,10 +1,15 @@
 import { foldPolish } from './polish-speech.ts';
+import type { Verbosity } from './protocol.ts';
 
 // Local conversation commands: matched as COMPLETE normalized phrases, never as substrings, so ordinary dictation that merely
 // contains one of these words ("wpisz powtórz w pole ...") stays on the validated action route.
-export type ConversationCommand = { kind: 'repeat' };
+export type VerbosityDirection = 'shorter' | 'longer';
+export type ConversationCommand = { kind: 'repeat' } | { kind: 'verbosity'; direction: VerbosityDirection };
 
 const REPEAT_PHRASES = new Set(['powtorz', 'powtorz to', 'powtorz prosze', 'prosze powtorz', 'powtorz to prosze', 'powtorz jeszcze raz', 'powiedz jeszcze raz', 'powiedz to jeszcze raz', 'co powiedziales', 'co mowiles']);
+
+const SHORTER_PHRASES = new Set(['krocej', 'mow krocej', 'mow troche krocej', 'odpowiadaj krocej', 'krocej prosze', 'prosze krocej', 'krotsze odpowiedzi']);
+const LONGER_PHRASES = new Set(['dokladniej', 'mow dokladniej', 'mow troche dokladniej', 'odpowiadaj dokladniej', 'dokladniej prosze', 'prosze dokladniej', 'bardziej szczegolowo', 'mow bardziej szczegolowo', 'dokladniejsze odpowiedzi']);
 
 // Case, diacritics, punctuation and spacing are normalized; nothing else is.
 export function normalizePhrase(text: string): string {
@@ -13,7 +18,25 @@ export function normalizePhrase(text: string): string {
 export function parseConversationCommand(text: string): ConversationCommand | null {
   const s = normalizePhrase(text);
   if (REPEAT_PHRASES.has(s)) return { kind: 'repeat' };
+  if (SHORTER_PHRASES.has(s)) return { kind: 'verbosity', direction: 'shorter' };
+  if (LONGER_PHRASES.has(s)) return { kind: 'verbosity', direction: 'longer' };
   return null;
+}
+
+// Three ordered levels, one persisted value. Anything else read from storage is treated as absent and falls back to the default.
+export const VERBOSITY_LEVELS: readonly Verbosity[] = ['concise', 'standard', 'detailed'];
+export const DEFAULT_VERBOSITY: Verbosity = 'standard';
+export function decodeVerbosity(value: unknown): Verbosity {
+  return value === 'concise' || value === 'standard' || value === 'detailed' ? value : DEFAULT_VERBOSITY;
+}
+// The value of the verbosity key in a chrome.storage.local.get(...) result.
+export function decodeStoredVerbosity(items: unknown, key: string): Verbosity {
+  return typeof items === 'object' && items !== null && !Array.isArray(items) ? decodeVerbosity((items as Record<string, unknown>)[key]) : DEFAULT_VERBOSITY;
+}
+// One step per command, saturating at both ends.
+export function moveVerbosity(current: Verbosity, direction: VerbosityDirection): Verbosity {
+  const index = VERBOSITY_LEVELS.indexOf(current) + (direction === 'longer' ? 1 : -1);
+  return VERBOSITY_LEVELS[Math.min(VERBOSITY_LEVELS.length - 1, Math.max(0, index))]!;
 }
 
 // What a spoken line is for. Only a substantive, successfully delivered message may become the replay buffer; lifecycle statuses,

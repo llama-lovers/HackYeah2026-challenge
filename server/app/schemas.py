@@ -25,6 +25,10 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+# The only values a spoken-detail preference may take; shared by exploration and effect prompts.
+Verbosity = Literal["concise", "standard", "detailed"]
+
+
 Speech = Annotated[str, AfterValidator(lambda value: value[:300])]
 
 
@@ -81,6 +85,8 @@ class PageDiffModel(StrictModel):
 class EffectRequest(StrictModel):
     action: ExecutedAction
     diff: PageDiffModel
+    # Optional for older callers; it only tunes how much useful detail is spoken, never what was executed.
+    verbosity: Verbosity = "standard"
 
 
 class EffectSummary(StrictModel):

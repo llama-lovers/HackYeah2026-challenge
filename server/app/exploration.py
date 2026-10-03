@@ -12,10 +12,9 @@ from typing import Annotated, Literal
 from pydantic import Field, model_validator
 
 from app.prompts import fence
-from app.schemas import StrictModel
+from app.schemas import StrictModel, Verbosity
 
 ExplorationMode = Literal["summary", "actions"]
-Verbosity = Literal["concise", "standard", "detailed"]
 
 # Tier caps for the available-actions list; the standard tier stays inside the required three to five.
 ACTION_CAPS: dict[str, int] = {"concise": 3, "standard": 4, "detailed": 5}

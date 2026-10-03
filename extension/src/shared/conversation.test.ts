@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseConversationCommand, normalizePhrase, savesForReplay, makeReplay, decodeReplay, decodeAnnounceAck, MAX_REPLAY_CHARS } from './conversation.ts';
+import { VERBOSITY_LEVELS, DEFAULT_VERBOSITY, decodeVerbosity, decodeStoredVerbosity, moveVerbosity, parseConversationCommand, normalizePhrase, savesForReplay, makeReplay, decodeReplay, decodeAnnounceAck, MAX_REPLAY_CHARS } from './conversation.ts';
 
 test('repeat is recognised only as a complete phrase, ignoring case, diacritics and punctuation', () => {
   for (const text of ['powtórz', 'Powtórz.', '  POWTÓRZ  to!  ', 'Powtórz, proszę', 'proszę powtórz', 'powiedz jeszcze raz', 'Co powiedziałeś?', 'powtorz']) {
@@ -39,4 +39,22 @@ test('stored replay data is decoded, never trusted', () => {
 test('an announce acknowledgement must name the document that spoke', () => {
   assert.equal(decodeAnnounceAck({ ok: true, docId: 'doc-1' }), 'doc-1');
   for (const bad of [undefined, null, { ok: true }, { ok: false, docId: 'd' }, { ok: true, docId: '' }, { ok: true, docId: 5 }, 'ok']) assert.equal(decodeAnnounceAck(bad), undefined);
+});
+test('shorter and longer are complete phrases only', () => {
+  for (const text of ['krócej', 'Krócej.', 'mów krócej', 'proszę krócej', 'Krócej, proszę!']) assert.deepEqual(parseConversationCommand(text), { kind: 'verbosity', direction: 'shorter' }, text);
+  for (const text of ['dokładniej', 'Dokładniej.', 'mów dokładniej', 'bardziej szczegółowo', 'Dokładniej, proszę!']) assert.deepEqual(parseConversationCommand(text), { kind: 'verbosity', direction: 'longer' }, text);
+  for (const text of ['wpisz krócej w pole numer', 'kliknij dokładniej', 'czy możesz mówić krócej i kliknąć Znajdź', 'krócej niż wczoraj', 'dokładniej opisz stronę', 'bardzo krócej']) assert.equal(parseConversationCommand(text), null, text);
+});
+test('moving through the levels takes one step and saturates at both ends', () => {
+  assert.deepEqual(VERBOSITY_LEVELS, ['concise', 'standard', 'detailed']);
+  assert.equal(moveVerbosity('standard', 'shorter'), 'concise'); assert.equal(moveVerbosity('standard', 'longer'), 'detailed');
+  assert.equal(moveVerbosity('concise', 'shorter'), 'concise'); assert.equal(moveVerbosity('detailed', 'longer'), 'detailed');
+  assert.equal(moveVerbosity('concise', 'longer'), 'standard'); assert.equal(moveVerbosity('detailed', 'shorter'), 'standard');
+});
+test('only the exact three values are accepted from storage, everything else is the default', () => {
+  for (const v of VERBOSITY_LEVELS) assert.equal(decodeVerbosity(v), v);
+  for (const bad of [undefined, null, 1, true, '', 'Concise', 'verbose', ['concise'], { v: 'concise' }]) assert.equal(decodeVerbosity(bad), DEFAULT_VERBOSITY);
+  assert.equal(decodeStoredVerbosity({ verbosity: 'detailed' }, 'verbosity'), 'detailed');
+  for (const bad of [undefined, null, 'x', [], {}, { other: 'detailed' }, { verbosity: 'x' }]) assert.equal(decodeStoredVerbosity(bad, 'verbosity'), DEFAULT_VERBOSITY);
+  assert.equal(DEFAULT_VERBOSITY, 'standard');
 });

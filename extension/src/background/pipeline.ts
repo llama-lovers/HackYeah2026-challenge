@@ -1,4 +1,4 @@
-import { SESSION_KEYS, PENDING_EFFECT_MAX_AGE_MS } from '../shared/protocol.ts';
+import { SESSION_KEYS, VERBOSITY_KEY, PENDING_EFFECT_MAX_AGE_MS } from '../shared/protocol.ts';
 import type { PingResult, FromOffscreen, SnapshotResult, CandidatesResult, ExecuteResult, ExecutedAction, EffectResponse, PendingEffectJob, SettleDiffResult, ReadStatusResult } from '../shared/protocol.ts';
 import type { PageDiff, Snapshot } from '../shared/snapshot-format.ts';
 import { parseIntent, isCaptchaLabel } from '../shared/intent.ts';
@@ -14,8 +14,9 @@ import type { Proposal, ConfirmCategory } from '../shared/validate.ts';
 import { onToggle, isStale } from '../shared/turn.ts';
 import type { TurnState } from '../shared/turn.ts';
 import { maskText } from '../shared/mask.ts';
-import { parseConversationCommand, savesForReplay, makeReplay, decodeReplay, decodeAnnounceAck } from '../shared/conversation.ts';
-import type { OutputIntent } from '../shared/conversation.ts';
+import { parseConversationCommand, savesForReplay, makeReplay, decodeReplay, decodeAnnounceAck, decodeStoredVerbosity, moveVerbosity } from '../shared/conversation.ts';
+import type { OutputIntent, VerbosityDirection } from '../shared/conversation.ts';
+import type { Verbosity } from '../shared/protocol.ts';
 import { parseExploreCommand, decodeSummary, decodeActions, decodeRecheck, ACTION_CAPS } from '../shared/exploration.ts';
 import { toModelText, spokenName } from '../shared/snapshot-format.ts';
 import * as msg from '../shared/messages.pl.ts';
@@ -90,11 +91,15 @@ async function dropReplayOf(tabId: number): Promise<void> {
     if (!entry || entry.tabId === tabId) await chrome.storage.session.remove(SESSION_KEYS.lastResponse);
   } catch { /* nothing stored that could be replayed */ }
 }
+// The persisted spoken-detail level. Absent, malformed or unreadable storage means the default; it is read per use because the worker may restart at any time.
+export async function getVerbosity(): Promise<Verbosity> {
+  try { return decodeStoredVerbosity(await chrome.storage.local.get(VERBOSITY_KEY), VERBOSITY_KEY); } catch { return decodeStoredVerbosity(undefined, VERBOSITY_KEY); }
+}
 export async function announceEffect(tabId: number, action: ExecutedAction, diff: PageDiff, signal?: AbortSignal): Promise<void> {
   if (isEmptyDiff(diff)) { await announce(tabId, msg.noChange(action.kind, action.name)); return; }
   let text: string;
   try {
-    const reply = await postJson<EffectResponse>('/api/effect', { action, diff }, 12000, signal);
+    const reply = await postJson<EffectResponse>('/api/effect', { action, diff, verbosity: await getVerbosity() }, 12000, signal);
     text = speakable(reply.say).trim() || msg.effectFallback(action.kind, action.name);
   } catch { text = msg.effectFallback(action.kind, action.name); }
   if (signal?.aborted) return;
@@ -257,6 +262,18 @@ async function runRepeat(run: CommandRun): Promise<void> {
   if (stored !== undefined && docId !== undefined && (!entry || entry.tabId === tabId)) { try { await chrome.storage.session.remove(SESSION_KEYS.lastResponse); } catch { /* best effort */ } }
   await say(msg.REPLAY_EMPTY, 'status');
 }
+// "krócej" / "dokładniej": one step through concise, standard and detailed. The only thing persisted is the enum itself, and the new level is
+// announced only after the write succeeded, so the user never hears a setting that a browser restart would lose. The reply is a status:
+// it must not replace the response that "powtórz" would repeat.
+async function runVerbosity(run: CommandRun, direction: VerbosityDirection): Promise<void> {
+  const { turnId, tabId } = run;
+  const say = async (text: string) => { if (await ownsTurn(turnId)) await announce(tabId, text, 'status'); };
+  const current = await getVerbosity();
+  const next = moveVerbosity(current, direction);
+  if (next === current) { await say(direction === 'shorter' ? msg.VERBOSITY_AT_SHORTEST : msg.VERBOSITY_AT_LONGEST); return; }
+  try { await chrome.storage.local.set({ [VERBOSITY_KEY]: next }); } catch { await say(msg.VERBOSITY_NOT_SAVED); return; }
+  await say(msg.VERBOSITY_SPOKEN[next]);
+}
 // Read-only exploration: it requests a snapshot and speaks; it never sends EXECUTE, /api/action or stores a pending interaction.
 async function runSummary(run: CommandRun): Promise<void> {
   const { turnId, tabId, signal } = run;
@@ -269,7 +286,7 @@ async function runSummary(run: CommandRun): Promise<void> {
   if (!(await ownsTurn(turnId))) return;
   if (!result.snapshot.nodes.length) { await say(msg.PAGE_EMPTY); return; }
   let reply: unknown;
-  try { reply = await postJson<unknown>('/api/explore', { mode: 'summary', verbosity: 'standard', snapshot: toModelText(result.snapshot), candidates: [] }, 20000, signal); }
+  try { reply = await postJson<unknown>('/api/explore', { mode: 'summary', verbosity: await getVerbosity(), snapshot: toModelText(result.snapshot), candidates: [] }, 20000, signal); }
   catch (error) { await say(error instanceof EgressBlockedError ? msg.SNAPSHOT_FAILED : msg.EXPLORE_FAILED); return; }
   if (!(await ownsTurn(turnId))) return;
   const sentences = decodeSummary(reply);
@@ -290,10 +307,11 @@ async function runActions(run: CommandRun): Promise<void> {
   // Sparse pages report the real count: with nothing eligible the model is not asked and nothing is invented.
   if (!candidates.length) { await say(incomplete ? msg.NO_ACTIONS_PARTIAL : msg.NO_ACTIONS); return; }
   let reply: unknown;
-  try { reply = await postJson<unknown>('/api/explore', { mode: 'actions', verbosity: 'standard', snapshot: toModelText(snapshot), candidates }, 20000, signal); }
+  const verbosity = await getVerbosity();
+  try { reply = await postJson<unknown>('/api/explore', { mode: 'actions', verbosity, snapshot: toModelText(snapshot), candidates }, 20000, signal); }
   catch (error) { await say(error instanceof EgressBlockedError ? msg.SNAPSHOT_FAILED : msg.ACTIONS_FAILED); return; }
   if (!(await ownsTurn(turnId))) return;
-  const ids = decodeActions(reply, candidates.map(c => c.id), ACTION_CAPS.standard);
+  const ids = decodeActions(reply, candidates.map(c => c.id), ACTION_CAPS[verbosity]);
   if (!ids) { await say(msg.ACTIONS_FAILED); return; }
   let rechecked: ReturnType<typeof decodeRecheck>;
   try { rechecked = decodeRecheck(await chrome.tabs.sendMessage(tabId, { type: 'RECHECK_CANDIDATES', docId, epoch: snapshot.epoch, ids }, { frameId: 0 }), ids); }
@@ -316,7 +334,7 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
   const command = parseConversationCommand(text);
   if (command) {
     if (tabId === undefined) { await say(msg.SNAPSHOT_FAILED, 'status'); return; }
-    return runRepeat(run);
+    return command.kind === 'repeat' ? runRepeat(run) : runVerbosity(run, command.direction);
   }
   const pending = await claimPending(turnId);
   if (pending && pending.tabId === tabId) {

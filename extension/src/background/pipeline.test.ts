@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 // Minimal chrome adapter: just enough for the background pipeline's state machine.
 type Handler = (tabId: number, message: any) => unknown;
 const store = new Map<string, unknown>();
+// chrome.storage.local stand-in: persistent across turns, with switches to make reads or writes fail.
+const localStore = new Map<string, unknown>();
+const localFault = { read: false, write: false, writes: 0 };
 const sent: any[] = [];
 const spoken: string[] = [];
 const tabCalls: { tabId: number; message: any }[] = [];
@@ -16,6 +19,9 @@ g.chrome = {
     get: async (key: string) => store.has(key) ? { [key]: structuredClone(store.get(key)) } : {},
     set: async (items: Record<string, unknown>) => { for (const [k, v] of Object.entries(items)) store.set(k, structuredClone(v)); },
     remove: async (key: string) => { store.delete(key); },
+  }, local: {
+    get: async (key: string) => { if (localFault.read) throw new Error('storage read failed'); return localStore.has(key) ? { [key]: structuredClone(localStore.get(key)) } : {}; },
+    set: async (items: Record<string, unknown>) => { if (localFault.write) throw new Error('quota exceeded'); localFault.writes++; for (const [k, v] of Object.entries(items)) localStore.set(k, structuredClone(v)); },
   } },
   runtime: { id: 'ext', sendMessage: async (message: any) => { sent.push(message); }, getContexts: async () => [{}], ContextType: { OFFSCREEN_DOCUMENT: 'OFFSCREEN_DOCUMENT' }, openOptionsPage: async () => {} },
   offscreen: { createDocument: async () => {}, Reason: { USER_MEDIA: 'USER_MEDIA' } },
@@ -25,7 +31,7 @@ g.chrome = {
 };
 const pipeline = await import('./pipeline.ts');
 const turn = () => pipeline.getTurn() as Promise<any>;
-beforeEach(() => { store.clear(); sent.length = 0; spoken.length = 0; tabCalls.length = 0; injected.length = 0; tabHandler = () => ({ ok: true }); injectHandler = () => [{ result: undefined }]; });
+beforeEach(() => { store.clear(); localStore.clear(); localFault.read = false; localFault.write = false; localFault.writes = 0; sent.length = 0; spoken.length = 0; tabCalls.length = 0; injected.length = 0; tabHandler = () => ({ ok: true }); injectHandler = () => [{ result: undefined }]; });
 
 test('rapid shortcut presses start then stop one recording and keep its owner (CR-05)', async () => {
   await Promise.all([pipeline.handleToggle({ id: 7, url: 'https://example.com/' } as chrome.tabs.Tab), pipeline.handleToggle({ id: 22, url: 'https://example.com/' } as chrome.tabs.Tab)]);
@@ -740,4 +746,90 @@ test('dictation that contains the word still goes to the validated action route'
   tabCalls.length = 0; await localCommand('wpisz powtórz w pole numer');
   assert.equal(exploreCalls.length, 1); assert(exploreCalls[0]!.url.endsWith('/api/action'));
   assert.equal(replayStored().text === SUMMARY_TEXT, false, 'the later answer replaced it as a normal substantive message');
+});
+// Persistent three-level verbosity (OUT-04).
+const stored = () => localStore.get('verbosity');
+test('"krócej" and "dokładniej" move one level, saturate, and announce only after the write succeeded', async () => {
+  replayAdapter();
+  const steps: [string, string, string | undefined, number][] = [
+    ['krócej', 'Odpowiadam krótko.', 'concise', 1],
+    ['krócej', 'Już odpowiadam najkrócej. Powiedz „dokładniej”, żebym dodał szczegółów.', 'concise', 1],
+    ['Dokładniej.', 'Odpowiadam standardowo.', 'standard', 2],
+    ['mów dokładniej', 'Odpowiadam szczegółowo.', 'detailed', 3],
+    ['dokładniej', 'Już odpowiadam najdokładniej. Powiedz „krócej”, żebym skrócił odpowiedzi.', 'detailed', 3],
+    ['Krócej!', 'Odpowiadam standardowo.', 'standard', 4],
+  ];
+  for (const [phrase, expected, level, writes] of steps) {
+    tabCalls.length = 0; await localCommand(phrase);
+    assert.deepEqual(announced(), [expected], phrase); assert.equal(stored(), level, phrase); assert.equal(localFault.writes, writes, phrase);
+  }
+  assert.deepEqual([...localStore.keys()], ['verbosity']); untouched();
+});
+test('absent, malformed and unreadable preference storage all mean standard', async () => {
+  for (const bad of [undefined, 'verbose', '', null, 3, ['concise'], { level: 'concise' }, 'CONCISE']) {
+    localStore.clear(); if (bad !== undefined) localStore.set('verbosity', bad);
+    exploreAdapter({ sentences: ['To strona.'], candidate_ids: [] });
+    await localCommand('co tu jest?');
+    assert.equal(exploreCalls[0]!.body.verbosity, 'standard', JSON.stringify(bad));
+  }
+  localFault.read = true; exploreAdapter({ sentences: ['To strona.'], candidate_ids: [] });
+  await localCommand('co tu jest?'); assert.equal(exploreCalls[0]!.body.verbosity, 'standard');
+  localFault.read = false; localStore.set('verbosity', 'bogus'); replayAdapter();
+  tabCalls.length = 0; await localCommand('krócej');
+  assert.equal(stored(), 'concise', 'a step from the effective default overwrites the damaged value'); assert.deepEqual(announced(), ['Odpowiadam krótko.']);
+});
+test('a failed write is spoken as not saved, keeps the prior level and never claims success', async () => {
+  replayAdapter(); localStore.set('verbosity', 'detailed'); localFault.write = true;
+  await localCommand('krócej');
+  assert.deepEqual(announced(), ['Nie udało się zapisać ustawienia, więc zostaje poprzedni poziom szczegółowości. Spróbuj jeszcze raz.']);
+  assert.equal(stored(), 'detailed'); localFault.write = false;
+  tabCalls.length = 0;
+  actionsAdapter({ reply: { sentences: [], candidate_ids: ['e1', 'e2', 'e3', 'e4', 'e5'] } });
+  await localCommand('co mogę zrobić?');
+  assert.equal(exploreCalls[0]!.body.verbosity, 'detailed');
+});
+test('the stored level selects the verbosity sent for exploration and the action cap', async () => {
+  for (const [level, cap] of [['concise', 3], ['standard', 4], ['detailed', 5]] as const) {
+    localStore.set('verbosity', level);
+    const ids = sixCandidates.map(c => c.id);
+    for (const [count, accepted] of [[cap, true], [cap + 1, false]] as const) {
+      tabCalls.length = 0; actionsAdapter({ reply: { sentences: [], candidate_ids: ids.slice(0, count) } });
+      await localCommand('co mogę zrobić?');
+      assert.equal(exploreCalls[0]!.body.verbosity, level);
+      assert.equal(announced()[0]!.startsWith('Możesz'), accepted, `${level} ${count}`);
+      if (!accepted) assert.deepEqual(announced(), ['Nie udało się sprawdzić, co można tu zrobić. Spróbuj jeszcze raz za chwilę.']);
+    }
+  }
+  localStore.set('verbosity', 'concise'); tabCalls.length = 0; exploreAdapter({ sentences: ['Jedno.', 'Drugie.', 'Trzecie.'], candidate_ids: [] });
+  await localCommand('co tu jest?');
+  assert.equal(exploreCalls[0]!.body.verbosity, 'concise');
+  assert.deepEqual(announced(), ['Nie udało się opisać tej strony. Spróbuj jeszcze raz za chwilę.'], 'three sentences are never accepted at any level');
+});
+test('the effect request carries the stored level and the executed action unchanged', async () => {
+  for (const level of ['concise', 'detailed'] as const) {
+    localStore.set('verbosity', level); const bodies: any[] = [];
+    g.fetch = async (url: string, init: RequestInit) => { if (String(url).endsWith('/api/effect')) bodies.push(JSON.parse(String(init.body))); return { ok: true, json: async () => ({ say: 'Zmiana.' }) }; };
+    tabHandler = () => ({ ok: true });
+    await pipeline.announceEffect(7, { kind: 'click', name: 'Znajdź', role: 'button' }, { added: ['Status'], removed: [], changed: [], alerts: [] });
+    assert.deepEqual(bodies, [{ action: { kind: 'click', name: 'Znajdź', role: 'button' }, diff: { added: ['Status'], removed: [], changed: [], alerts: [] }, verbosity: level }]);
+  }
+});
+test('the verbosity change never regenerates the replayed text and persists no page-derived content', async () => {
+  replayAdapter(); await pipeline.announce(7, SUMMARY_TEXT);
+  await localCommand('dokładniej'); await localCommand('krócej'); await localCommand('krócej');
+  tabCalls.length = 0; await localCommand('powtórz');
+  assert.deepEqual(announced(), [SUMMARY_TEXT]); untouched();
+  assert.deepEqual([...localStore.entries()], [['verbosity', 'concise']]);
+  assert(!JSON.stringify([...localStore]).includes('Śledz'));
+});
+test('shorter verbosity never removes a refusal or a recovery next step', async () => {
+  localStore.set('verbosity', 'concise'); replayAdapter();
+  tabCalls.length = 0; await localCommand('rozwiąż captcha');
+  assert.deepEqual(announced(), ['Nie rozwiązuję zabezpieczeń captcha. Poproś o pomoc zaufaną osobę.']);
+  tabCalls.length = 0; g.fetch = async () => { throw new Error('offline'); };
+  await localCommand('co tu jest');
+  assert.deepEqual(announced(), ['Nie udało się opisać tej strony. Spróbuj jeszcze raz za chwilę.']);
+  tabCalls.length = 0; actionsAdapter({}); g.fetch = async () => { throw new Error('offline'); };
+  await localCommand('co mogę zrobić?');
+  assert.deepEqual(announced(), ['Nie udało się sprawdzić, co można tu zrobić. Spróbuj jeszcze raz za chwilę.']);
 });

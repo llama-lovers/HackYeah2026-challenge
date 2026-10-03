@@ -1,6 +1,6 @@
 import type { RejectReason, ConfirmCategory } from './validate.ts';
 import { truncate, collapse } from './snapshot-format.ts';
-import type { ParcelStatus, ExecutedAction, ExplorationCandidate } from './protocol.ts';
+import type { ParcelStatus, ExecutedAction, ExplorationCandidate, Verbosity } from './protocol.ts';
 import type { PageDiff } from './snapshot-format.ts';
 import { isEmptyDiff } from './diff.ts';
 import { STATUS_SPOKEN_MAX } from './limits.ts';
@@ -117,3 +117,7 @@ export function actionsList(items: ExplorationCandidate[], incomplete: boolean):
   return speakable((incomplete ? 'Na początku strony możesz ' : 'Możesz ') + joined + '.');
 }
 export const REPLAY_EMPTY = 'Nie mam nic do powtórzenia. Zapytaj na przykład, co tu jest.';
+export const VERBOSITY_SPOKEN: Record<Verbosity, string> = { concise: 'Odpowiadam krótko.', standard: 'Odpowiadam standardowo.', detailed: 'Odpowiadam szczegółowo.' };
+export const VERBOSITY_AT_SHORTEST = 'Już odpowiadam najkrócej. Powiedz „dokładniej”, żebym dodał szczegółów.';
+export const VERBOSITY_AT_LONGEST = 'Już odpowiadam najdokładniej. Powiedz „krócej”, żebym skrócił odpowiedzi.';
+export const VERBOSITY_NOT_SAVED = 'Nie udało się zapisać ustawienia, więc zostaje poprzedni poziom szczegółowości. Spróbuj jeszcze raz.';

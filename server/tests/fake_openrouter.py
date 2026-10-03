@@ -14,6 +14,7 @@ def extract(content, tag):
 def exploration_payload(content: str) -> dict:
     """Read-only exploration reply. FAKE-MODEL:<kind> markers in the page text steer deliberately bad outputs."""
     mode = extract(content, "mode").strip()
+    tier = extract(content, "verbosity").strip() or "standard"
     snapshot = extract(content, "page_snapshot")
     kind = (re.search(r"FAKE-MODEL:([a-z]+)", snapshot) or [None, ""])[1]
     if mode == "summary":
@@ -22,7 +23,8 @@ def exploration_payload(content: str) -> dict:
         sentences = [f"To strona „{title}”." if title else "To strona bez tytułu."]
         if heading:
             sentences.append(f"Główny nagłówek to „{heading}”.")
-        payload = {"sentences": sentences, "candidate_ids": []}
+        # Concise keeps one sentence; standard and detailed keep the heading sentence too (never more than two).
+        payload = {"sentences": sentences[:1] if tier == "concise" else sentences, "candidate_ids": []}
         if kind == "null":
             payload["sentences"] = None
         elif kind == "empty":
@@ -54,7 +56,13 @@ def fake_reply(body: dict) -> dict:
         text = (next(iter(diff.get("alerts", [])), "") or next(iter(diff.get("added", [])), "")
                 or (f'{change[0]["name"]} {change[0]["what"]}' if change else "")
                 or diff.get("title", {}).get("after", "") or diff.get("path", {}).get("after", ""))
-        payload = {"say": ("Zmiana na stronie: " + text)[:150] if text else "Zmiana na stronie."}
+        tier = extract(content, "verbosity").strip() or "standard"
+        say = ("Zmiana na stronie: " + text)[:150] if text else "Zmiana na stronie."
+        if tier == "concise":
+            say = ("Zmiana: " + text)[:60] if text else "Zmiana."
+        elif tier == "detailed":
+            say += " Sprawdź szczegóły na stronie."
+        payload = {"say": say}
     else:
         utterance = extract(content, "utterance").strip().removesuffix(".")
         lines = [match.groupdict() for line in extract(content, "page_snapshot").splitlines()

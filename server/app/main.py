@@ -88,7 +88,7 @@ def create_app(settings: Settings | None = None,
             return JSONResponse({"error": "no_api_key"}, status_code=503)
         try:
             data = await chat_json(app.state.http, settings, schema_name="effect_summary",
-                                   schema=EFFECT_SCHEMA, messages=build_effect_messages(body.action, body.diff),
+                                   schema=EFFECT_SCHEMA, messages=build_effect_messages(body.action, body.diff, body.verbosity),
                                    max_tokens=settings.effect_max_tokens)
             return EffectSummary.model_validate(data).model_dump()
         except ValidationError:

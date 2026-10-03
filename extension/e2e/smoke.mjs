@@ -16,7 +16,8 @@ const temporary = await mkdtemp(join(tmpdir(), 'voice-e2e-'));
 const record = join(temporary, 'upstream.jsonl');
 const proxyOrigin = 'http://localhost:8788';
 const extensionId = spawnSync(process.execPath, ['scripts/gen-key.mjs', '--id', 'static/manifest.json'], { cwd: EXT_DIR, encoding: 'utf8' }).stdout.trim();
-let fake, proxy, browser, client;
+let fake, proxy, browser, client, profileDir;
+const extensionDir = join(EXT_DIR, 'dist-e2e');
 let passed = 0;
 const initScript = `window.__liveLog = [];
 new MutationObserver(records => {
@@ -39,12 +40,13 @@ try {
         client?.close(); await browser?.close();
         const build = spawnSync(process.execPath, ['scripts/build.mjs'], { cwd: EXT_DIR, env: { ...process.env, E2E: '1', OUT_DIR: 'dist-e2e', PROXY_URL: proxyOrigin, ...scenario.buildEnv }, encoding: 'utf8' });
         if (build.status !== 0) throw new Error(build.stderr || build.stdout);
-        browser = await launchChromium({ userDataDir: join(temporary, 'profile-' + scenarios.indexOf(scenario)), extensionDir: join(EXT_DIR, 'dist-e2e') });
+        profileDir = join(temporary, 'profile-' + scenarios.indexOf(scenario));
+        browser = await launchChromium({ userDataDir: profileDir, extensionDir });
         client = await connect(browser.port);
         lastBuild = signature;
       }
       const sw = await waitForTarget(browser.port, t => t.type === 'service_worker' && t.url === `chrome-extension://${extensionId}/background/sw.js`);
-      const session = await attach(client, sw.id);
+      let session = await attach(client, sw.id);
       const swEval = expression => evaluate(client, session, expression);
       const liveLog = page => page.evaluate('window.__liveLog');
       const toggle = opts => swEval(`globalThis.__voiceAgentTest.toggle(${JSON.stringify(opts) ?? 'undefined'})`);
@@ -74,6 +76,19 @@ try {
         upstreamMark: async () => (await upstream()).length,
         upstreamSince: async mark => (await upstream()).slice(mark),
         proxyOutput: () => proxy.output(),
+        // Closes the browser and starts a new one on the SAME profile directory: durable extension storage survives, session storage does not.
+        async restartBrowser() {
+          client.close(); await browser.close();
+          await rm(join(profileDir, 'DevToolsActivePort'), { force: true });
+          browser = await launchChromium({ userDataDir: profileDir, extensionDir });
+          client = await connect(browser.port);
+          ctx.client = client; ctx.browser = browser;
+          // A service worker is only started by an event; a fixture page's content script (READY) wakes it.
+          const warm = await openPage(client, proxyOrigin + '/fixtures/tracking-form.html', { initScript });
+          const restarted = await waitForTarget(browser.port, t => t.type === 'service_worker' && t.url === `chrome-extension://${extensionId}/background/sw.js`);
+          session = await attach(client, restarted.id);
+          await client.send('Target.closeTarget', { targetId: warm.targetId });
+        },
       };
       // A timed-out scenario keeps running in the background, so its browser is discarded (never reused) and its late calls fail on the closed connection.
       let timer, timedOut = false;

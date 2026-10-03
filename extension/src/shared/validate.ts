@@ -1,4 +1,4 @@
-export interface Proposal { action: string; target: string; text: string; needs_confirmation: boolean; say: string }
+export interface Proposal { action: string; target: string; text: string; needs_confirmation: boolean; say: string; option_1?: string; option_2?: string; option_3?: string }
 export interface ResolvedTarget { exists: boolean; epochMatches: boolean; connected: boolean; visible: boolean; disabled: boolean; role: string; sensitive: boolean; name: string; maxLength: number | null; submitsNonLookupForm: boolean; sideEffectSignals: boolean; knownSafe: boolean; drifted: boolean; consent: boolean }
 export type RejectReason = 'unknown_action' | 'not_found' | 'stale' | 'hidden' | 'disabled' | 'role_mismatch' | 'sensitive_fill' | 'empty_text' | 'too_long' | 'needs_confirmation' | 'irreversible' | 'unconfirmed';
 export type Verdict = { ok: true; kind: 'click' | 'fill' | 'none' } | { ok: false; reason: RejectReason };

@@ -7,6 +7,7 @@ import { createBudget, takeStep } from '../shared/limits.ts';
 import type { StepBudget } from '../shared/limits.ts';
 import { isParcelDigits, pickParcelField, pickSearchButton } from '../shared/parcel.ts';
 import { routeReply } from '../shared/pending.ts';
+import { optionsFromIds, addContexts } from '../shared/choice.ts';
 import type { PendingInteraction } from '../shared/pending.ts';
 import { isEmptyDiff } from '../shared/diff.ts';
 import type { Proposal, ConfirmCategory } from '../shared/validate.ts';
@@ -209,13 +210,18 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
   const intent = parseIntent(text);
   if (pending && pending.tabId === tabId) {
     const reply = routeReply(pending, text, Date.now());
+    if (reply.kind === 'choose' && pending.kind === 'choose_option') {
+      const option = pending.options[reply.index]!;
+      const outcome = await performProposal(run, { proposal: {action:pending.action, target:option.id, text:pending.text, needs_confirmation:pending.needsConfirmation, say:''}, epoch:pending.epoch, docId:pending.docId, preSnapshot:pending.preSnapshot, announce:'model', context:option.context });
+      return outcome === 'handoff' ? 'handoff' : undefined;
+    }
     if (reply.kind === 'confirm' && pending.kind === 'confirm_parcel') return runParcelSearch(run, pending.digits);
     if (reply.kind === 'confirm' && pending.kind === 'confirm_action') {
       const outcome = await performProposal(run, { proposal: pending.proposal, epoch: pending.epoch, docId: pending.docId, preSnapshot: pending.preSnapshot, announce: 'local', confirmed: true, category: pending.category });
       return outcome === 'handoff' ? 'handoff' : undefined;
     }
     if (reply.kind === 'cancel') { await say(msg.CANCELLED); return; }
-    if (reply.kind === 'reprompt') { await setPending(turnId, { ...pending, reprompts: pending.reprompts + 1 }); await say(msg.CONFIRM_REPROMPT); return; }
+    if (reply.kind === 'reprompt') { await setPending(turnId, { ...pending, reprompts: pending.reprompts + 1 }); await say(pending.kind === 'choose_option' ? msg.choiceReprompt(pending.options.length) : msg.CONFIRM_REPROMPT); return; }
     if (reply.kind === 'number') return parcelReadback(run, reply.digits);
     if (reply.kind === 'bad_number') { await setPending(turnId, { ...pending, reprompts: pending.reprompts + 1 }); await say(reply.count === null ? msg.PARCEL_NOT_UNDERSTOOD : msg.parcelWrongLength(reply.count)); return; }
     if (reply.kind === 'expired' && (intent.kind === 'yes' || intent.kind === 'no')) { await say(msg.CONFIRM_EXPIRED); return; }
@@ -242,6 +248,13 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
     proposal = await postJson('/api/action', { utterance, snapshot: toModelText(result.snapshot) }, 20000, signal);
   } catch (error) { await say(error instanceof EgressBlockedError ? msg.SNAPSHOT_FAILED : msg.ASSISTANT_FAILED); return; }
   if (!(await ownsTurn(turnId))) return;
+  if (proposal.action === 'choose') {
+    const action = proposal.text ? 'fill' : 'click';
+    const options = addContexts(result.snapshot, optionsFromIds(result.snapshot, [proposal.option_1 ?? '', proposal.option_2 ?? '', proposal.option_3 ?? ''], action));
+    if (options.length < 2) { await say(msg.CHOICE_UNCLEAR); return; }
+    await setPending(turnId, {kind:'choose_option',action,text:proposal.text,needsConfirmation:proposal.needs_confirmation,epoch:result.snapshot.epoch,docId:result.docId,preSnapshot:result.snapshot,options,id:crypto.randomUUID(),tabId:tabId!,createdAt:Date.now(),reprompts:0});
+    await say(msg.choicePrompt(options)); return;
+  }
   const outcome = await performProposal(run, { proposal, epoch: result.snapshot.epoch, docId: result.docId, preSnapshot: result.snapshot, announce: 'model' });
   return outcome === 'handoff' ? 'handoff' : undefined;
 }

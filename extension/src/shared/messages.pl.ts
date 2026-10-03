@@ -5,6 +5,10 @@ import type { PageDiff } from './snapshot-format.ts';
 import { isEmptyDiff } from './diff.ts';
 import { STATUS_SPOKEN_MAX } from './limits.ts';
 import { spellInteger, speakable } from './polish-speech.ts';
+import type { ChoiceOption } from './choice.ts';
+export const CHOICE_UNCLEAR = 'Nie jestem pewien, o który element chodzi. Powiedz polecenie dokładniej.';
+export function choicePrompt(options: ChoiceOption[]): string { return 'Pasuje kilka elementów. ' + options.map((o,i) => `${['Jeden','Dwa','Trzy'][i]}: ${o.name}${o.context ? ', ' + o.context : ''}.`).join(' ') + ' Który? Powiedz numer.'; }
+export function choiceReprompt(count: number): string { return count === 2 ? 'Powiedz jeden albo dwa.' : 'Powiedz jeden, dwa albo trzy.'; }
 export const STATUS_TRUNCATED_NOTE = 'Dalszy opis jest na stronie.';
 export const STEP_LIMIT = 'To wszystko na jedno polecenie. Powiedz, co dalej.';
 export const PARCEL_ASK_NUMBER = 'Podaj numer przesyłki.';

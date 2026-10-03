@@ -1,0 +1,9 @@
+<!doctype html><html lang="pl"><head><meta charset="utf-8"><title>Moje przesyłki (fixture)</title></head><body>
+<main><h1>Moje przesyłki</h1>
+<section><h2>Paczka z Krakowa</h2><button type="button" data-city="Kraków">Szczegóły paczki z Krakowa</button><button type="button" data-city="Kraków" data-done="Usunięto paczkę z Krakowa.">Usuń</button></section>
+<section><h2>Paczka z Gdańska</h2><button type="button" data-city="Gdańsk">Szczegóły paczki z Gdańska</button><button type="button" data-city="Gdańsk" data-done="Usunięto paczkę z Gdańska.">Usuń</button></section>
+<section><h2>Paczka z Poznania</h2><button type="button" data-city="Poznań">Szczegóły paczki z Poznania</button><button type="button" data-city="Poznań" data-done="Usunięto paczkę z Poznania.">Usuń</button></section>
+<section><h2>Paczka z Łodzi</h2><button type="button" data-city="Łódź">Szczegóły paczki z Łodzi</button><button type="button" data-city="Łódź" data-done="Usunięto paczkę z Łodzi.">Usuń</button></section>
+<p id="info" role="status"></p></main>
+<script>window.__deleted=[]; document.querySelectorAll('button').forEach(button=>button.addEventListener('click',()=>{if(button.dataset.done){window.__deleted.push(button.dataset.city);document.querySelector('#info').textContent=button.dataset.done;}else{window.__opened=button.dataset.city;document.querySelector('#info').textContent='Szczegóły paczki: '+button.dataset.city;}}));</script>
+</body></html>

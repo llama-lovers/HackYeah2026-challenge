@@ -24,10 +24,17 @@ export async function execute(epoch: number, proposal: Proposal, announcer: { ho
   if (!pre || pre.epoch !== epoch) return { ok: false, reason: 'stale' };
   const element = resolved.element as HTMLElement;
   element.scrollIntoView({ block: 'center' });
+  if (verdict.kind === 'fill') {
+    element.focus();
+    // Focus handlers run page code synchronously and may repurpose the field (password/OTP, disabled, detached, shorter maxlength): revalidate before writing.
+    const afterFocus = resolveTarget(proposal.target, epoch);
+    const focusVerdict = validateProposal(proposal, afterFocus.target);
+    if (!focusVerdict.ok) return focusVerdict;
+    if (afterFocus.element !== element || !(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) return { ok: false, reason: 'role_mismatch' };
+  }
   const settled = startSettleWatch({ ignore: el => announcer.host.contains(el) });
   if (verdict.kind === 'click') element.click();
   else {
-    element.focus();
     const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     Object.getOwnPropertyDescriptor(prototype, 'value')!.set!.call(element, proposal.text);
     element.dispatchEvent(new Event('input', { bubbles: true }));

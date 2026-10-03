@@ -10,7 +10,7 @@ try {
   server = await serveStatic(join(SERVER_DIR, 'fixtures'));
   browser = await launchChromium({ userDataDir: profile });
   client = await connect(browser.port);
-  const bundle = await bundleForPage(`import {takeSnapshot, resolveTarget} from './src/content/snapshot.ts'; import {toModelText} from './src/shared/snapshot-format.ts'; import {validateProposal} from './src/shared/validate.ts'; globalThis.__snapTest={takeSnapshot,resolveTarget,toModelText,validateProposal};`, EXT_DIR);
+  const bundle = await bundleForPage(`import {takeSnapshot, resolveTarget} from './src/content/snapshot.ts'; import {toModelText} from './src/shared/snapshot-format.ts'; import {validateProposal} from './src/shared/validate.ts'; import {execute} from './src/content/executor.ts'; globalThis.__snapTest={takeSnapshot,resolveTarget,toModelText,validateProposal,execute};`, EXT_DIR);
   const page = await openPage(client, server.origin + '/fixtures/tracking-form.html');
   await page.evaluate(bundle);
   const tracking = await page.evaluate(`(() => { const before=document.documentElement.outerHTML; const snapshot=__snapTest.takeSnapshot(); globalThis.__saved=snapshot; return {snapshot,text:__snapTest.toModelText(snapshot),same:before===document.documentElement.outerHTML}; })()`);
@@ -107,6 +107,11 @@ try {
   // Everything is refused except the two positively identified harmless controls (a JS "Pokaż mapę" button and the tracking-form "Znajdź").
   for (const { i, name, verdict } of policies) assert.deepEqual(verdict, [9, 10].includes(i) ? { ok: true, kind: 'click' } : { ok: false, reason: 'irreversible' }, `policy ${i} ${name}`);
   console.log('PASS dom-check: Polish effects, consent, disguised forms and uncertain clicks');
+  // A focus handler may turn the field sensitive between the last policy check and the native write.
+  await page.evaluate(`document.body.innerHTML='<main><input id="f" placeholder="Numer przesyłki"></main><div id="host"></div>'; document.querySelector('#f').addEventListener('focus', e => { e.target.type = 'password'; })`);
+  const focusRace = await page.evaluate(`(async () => { const s=__snapTest.takeSnapshot(), id=s.nodes.find(n=>n.role==='textbox').id; const result=await __snapTest.execute(s.epoch,{action:'fill',target:id,text:'873234987612340872938732',needs_confirmation:false,say:''},{host:document.querySelector('#host'),announce(){}}); return {result,value:document.querySelector('#f').value}; })()`);
+  assert.deepEqual(focusRace, { result: { ok: false, reason: 'sensitive_fill' }, value: '' });
+  console.log('PASS dom-check: focus handler cannot make the native write sensitive');
 } catch (error) {
   console.error(`FAIL dom-check: ${error.stack}\n${lastText}`); process.exitCode = 1;
 } finally {

@@ -65,13 +65,21 @@ async function start() {
       return;
     }
     const chunks: Blob[] = [];
+    let failed = false;
     recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 32000 });
     recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    recorder.onerror = () => {
+      failed = true;
+      clearTimeout(timer);
+      stream?.getTracks().forEach(track => track.stop());
+      void send({ type: 'TRANSCRIBE_ERROR', code: 'stt_failed' } as Omit<FromOffscreen, 'target'>);
+    };
     recorder.onstart = () => { void send({ type: 'MIC_OPEN' }); timer = setTimeout(stop, 15000); if (stopRequested) stop(); };
     recorder.onstop = async () => {
       clearTimeout(timer);
       stream?.getTracks().forEach(track => track.stop());
       recorder = undefined; stream = undefined;
+      if (failed) return;
       await send({ type: 'REC_STOPPED' });
       await upload(new Blob(chunks, { type: 'audio/webm;codecs=opus' }));
     };

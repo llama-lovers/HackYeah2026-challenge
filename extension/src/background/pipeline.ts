@@ -230,7 +230,11 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
     if (reply.kind === 'reprompt') { await setPending(turnId, { ...pending, reprompts: pending.reprompts + 1 }); await say(pending.kind === 'choose_option' ? msg.choiceReprompt(pending.options.length) : msg.CONFIRM_REPROMPT); return; }
     if (reply.kind === 'number') return parcelReadback(run, reply.digits);
     if (reply.kind === 'bad_number') { await setPending(turnId, { ...pending, reprompts: pending.reprompts + 1 }); await say(reply.count === null ? msg.PARCEL_NOT_UNDERSTOOD : msg.parcelWrongLength(reply.count)); return; }
-    if (reply.kind === 'expired' && (pending.kind === 'choose_option' || intent.kind === 'yes' || intent.kind === 'no')) { await say(msg.CONFIRM_EXPIRED); return; }
+    if (reply.kind === 'expired') {
+      const number = wordsToDigits(text);
+      const parcelReply = (pending.kind === 'await_parcel_number' || pending.kind === 'confirm_parcel') && number.ok && number.digits.length > 0;
+      if (parcelReply || pending.kind === 'choose_option' || intent.kind === 'yes' || intent.kind === 'no') { await say(msg.CONFIRM_EXPIRED); return; }
+    }
   }
   if (intent.kind === 'track_parcel') {
     if (tabId === undefined) { await say(msg.SNAPSHOT_FAILED); return; }

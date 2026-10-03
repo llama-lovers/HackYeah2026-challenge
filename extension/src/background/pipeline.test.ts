@@ -209,6 +209,34 @@ test('expired confirmation cannot execute and speaks expiry', async () => {
   assert.deepEqual(network, []); assert(!tabCalls.some(c => c.message.type === 'EXECUTE'));
   assert.equal(store.has('pending'), false);
 });
+test('expired parcel-only replies stay local just beyond the TTL (WR-01)', async () => {
+  for (const kind of ['await_parcel_number','confirm_parcel']) {
+    for (const text of ['873234987612340872938732','12345678','jeden dwa trzy cztery pięć sześć siedem osiem','1234']) {
+      const network = localAdapter(); tabCalls.length=0;
+      store.set('pending',parcelPending({kind,createdAt:Date.now()-60001}));
+      await localCommand(text);
+      assert.deepEqual(announced(),['Minął czas na odpowiedź. Powiedz polecenie jeszcze raz.'],`${kind}: ${text}`);
+      assert.equal(store.has('pending'),false);
+      assert(!tabCalls.some(c=>['SNAPSHOT','EXECUTE'].includes(c.message.type)));
+      assert.deepEqual(network,[]);
+    }
+  }
+});
+test('explicit fresh commands remain routable after parcel expiry', async () => {
+  const requests:string[]=[];
+  g.fetch=async(url:string)=>{requests.push(String(url));return{ok:true,json:async()=>({action:'none',target:'',text:'',needs_confirmation:false,say:'Opis strony.'})};};
+  tabHandler=(_tab,m)=>m.type==='SNAPSHOT'?{ok:true,docId:'doc',snapshot:{...snapshot,nodes:[field,button]}}:m.type==='EXECUTE'?{ok:true,kind:'none'}:{ok:true};
+  store.set('pending',parcelPending({kind:'await_parcel_number',createdAt:Date.now()-60001}));
+  await localCommand('opisz stronę');
+  assert.equal(requests.length,1); assert(requests[0]!.endsWith('/api/action'));
+  assert.deepEqual(announced(),['Opis strony.']);
+  requests.length=0; tabCalls.length=0;
+  store.set('pending',parcelPending({kind:'await_parcel_number',createdAt:Date.now()-60001}));
+  await localCommand('sprawdź status przesyłki numer 12345678');
+  assert.equal((store.get('pending') as any).kind,'confirm_parcel');
+  assert.equal((store.get('pending') as any).digits,'12345678');
+  assert.deepEqual(requests,[]); assert(!tabCalls.some(c=>c.message.type==='EXECUTE'));
+});
 test('pending belongs to its tab and is removed when that tab closes', async () => {
   localAdapter(); store.set('pending', parcelPending({ tabId: 9 }));
   await localCommand('tak'); assert.equal(store.has('pending'), false);

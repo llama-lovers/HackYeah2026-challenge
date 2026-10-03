@@ -49,28 +49,43 @@ export async function announceEffect(tabId: number, action: ExecutedAction, diff
   } catch { text = msg.effectFallback(action.kind, action.name); }
   await announce(tabId, text);
 }
-export async function handleToggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promise<void> {
+// State-changing events (shortcut, offscreen notifications) run one at a time so read-modify-write of the turn cannot interleave.
+// Long work (model calls, page actions) is deliberately kept outside this queue so a new shortcut can still be answered with "busy".
+let serial: Promise<unknown> = Promise.resolve();
+export function runSerial<T>(task: () => Promise<T>): Promise<T> {
+  const run = serial.then(task, task);
+  serial = run.catch(() => {});
+  return run;
+}
+export async function resetTurnIf(id: string | undefined): Promise<void> { if ((await getTurn()).id === id) await resetTurn(); }
+export function handleToggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promise<void> { return runSerial(() => toggle(tab, opts)); }
+async function toggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promise<void> {
   if (tab.id === undefined) return;
   const state = await getTurn();
   const { next, effect } = onToggle(state, tab.id, Date.now());
   if (effect === 'busy') { await announce(tab.id, msg.BUSY); return; }
   if (effect === 'start') {
+    if (__E2E__ && opts?.stubText !== undefined) next.stubText = opts.stubText;
+    // Reserve the recording owner before any asynchronous setup; failures only release this reservation.
+    await setTurn(next);
     if (!(await ping(tab.id))) {
       speakTts(isSupportedUrl(tab.url) ? msg.RELOAD_PAGE : msg.ONLY_INPOST);
-      if (isStale(state, Date.now())) await resetTurn();
+      await resetTurnIf(next.id);
       return;
     }
-    if (__E2E__ && opts?.stubText !== undefined) next.stubText = opts.stubText;
-    await setTurn(next);
     try { await ensureOffscreen(); await chrome.runtime.sendMessage({ target: 'offscreen', type: 'REC_START' }); }
-    catch { await announce(tab.id, msg.MIC_NO_DEVICE); await resetTurn(); }
+    catch { await announce(tab.id, msg.MIC_NO_DEVICE); await resetTurnIf(next.id); }
   } else {
     await setTurn(next);
     try { await chrome.runtime.sendMessage({ target: 'offscreen', type: 'REC_STOP', ...(__E2E__ && state.stubText !== undefined ? { stubText: state.stubText } : {}) }); }
-    catch { await announce(state.tabId, msg.STT_FAILED); await resetTurn(); }
+    catch { await announce(state.tabId, msg.STT_FAILED); await resetTurnIf(state.id); }
   }
 }
 export async function handleOffscreenMessage(message: FromOffscreen): Promise<void> {
+  const work = await runSerial(() => onOffscreen(message));
+  if (work) await work();
+}
+async function onOffscreen(message: FromOffscreen): Promise<(() => Promise<void>) | void> {
   const turn = await getTurn();
   switch (message.type) {
     case 'MIC_OPEN': await announce(turn.tabId, msg.LISTENING); break;
@@ -83,8 +98,10 @@ export async function handleOffscreenMessage(message: FromOffscreen): Promise<vo
       await resetTurn(); break;
     case 'TRANSCRIBE_ERROR': await announce(turn.tabId, msg.STT_FAILED); await resetTurn(); break;
     case 'TRANSCRIPT':
-      let outcome: 'handoff' | void = undefined;
-      try { outcome = await runCommand(turn.tabId, message.text); } finally { if (outcome !== 'handoff') await resetTurn(); }
+      return async () => {
+        let outcome: 'handoff' | void = undefined;
+        try { outcome = await runCommand(turn.tabId, message.text); } finally { if (outcome !== 'handoff') await runSerial(() => resetTurnIf(turn.id)); }
+      };
   }
 }
 export async function runCommand(tabId: number | undefined, rawText: string): Promise<'handoff' | void> {

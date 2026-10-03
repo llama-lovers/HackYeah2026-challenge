@@ -32,7 +32,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. In the DevTools Network tab, requests to the proxy carry only the simplified page snapshot: on a test login/payment page the password, PESEL, IBAN, card number, CVV and one-time-code values are masked, while on inpost.pl the parcel number is sent unmasked.
   5. The OpenRouter key exists only in the proxy's environment (not in the extension bundle or the repo); the proxy returns schema-valid action proposals from the pinned Claude model, rejects oversized requests, and never logs request or response bodies.
 
-**Plans**: 3/4 plans executed
+**Plans**: 4/4 plans executed
 Plans:
 **Wave 1**
 - [x] 01-01-PLAN.md — FastAPI proxy: /api/action and /api/effect (strict schema, pinned model), /api/transcribe seam + stub, Origin/Host/body-cap guards, body-free logging, fake OpenRouter upstream (wave 1)
@@ -42,7 +42,7 @@ Plans:
 - [x] 01-03-PLAN.md — Walking skeleton: shortcut → offscreen recording → transcribe → masked snapshot → model → validated click → "Klikam Znajdź." in the live region; options-page mic grant; WAV fallback; E2E runner (wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 01-04-PLAN.md — Effect read-back (settle + diff + effect call), navigation handoff, E2E proof of refusals, privacy and logging, end-of-phase screen-reader checks (wave 3)
+- [x] 01-04-PLAN.md — Effect read-back (settle + diff + effect call), navigation handoff, E2E proof of refusals, privacy and logging, end-of-phase screen-reader checks (wave 3)
 
 **UI hint**: yes
 **Notes**: Research risk spikes are built inside this slice, not as a separate phase: one-time mic grant + offscreen recording (no per-site prompt), live region announcing a second message under NVDA, and a proxy round trip with strict structured output. Freeze the `transcribe` contract with the teammate first. The dev box is Linux, so live-region checks need an NVDA (Windows) or VoiceOver (macOS) machine.
@@ -101,7 +101,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 (Phase 3 may start alongsid
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Voice-to-Effect Vertical Slice | 3/4 | In Progress|  |
+| 1. Voice-to-Effect Vertical Slice | 4/4 | In Progress|  |
 | 2. Safe InPost Parcel Tracking | 0/TBD | Not started | - |
 | 3. Page Exploration & Conversation | 0/TBD | Not started | - |
 | 4. Audio Control & Accessible Settings | 0/TBD | Not started | - |

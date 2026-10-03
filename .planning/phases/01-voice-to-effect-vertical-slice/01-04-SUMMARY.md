@@ -43,50 +43,80 @@ requirements-completed: [ACT-02, ACT-07, OUT-01, ACT-04, SAFE-04, PROXY-01, PROX
 coverage:
   - id: masked-diff
     description: Identity, state/value transitions, duplicate ordinals, multiset surplus and Unicode caps
-    verification: [{kind: unit, ref: extension/src/shared/diff.test.ts, status: pass}]
+    verification:
+      - kind: unit
+        ref: extension/src/shared/diff.test.ts
+        status: pass
     human_judgment: false
   - id: effect
     description: Fill/click effects wait past the loader, ignore SVG churn, use only the masked diff, and announce no-change or failure templates
     requirement: ACT-07
-    verification: [{kind: e2e, ref: extension/e2e/scenarios/effect.mjs, status: pass}]
+    verification:
+      - kind: e2e
+        ref: extension/e2e/scenarios/effect.mjs
+        status: pass
     human_judgment: false
   - id: navigation
     description: Pre-announcement survives unload and the new page consumes one effect job; expired jobs are silent
-    verification: [{kind: e2e, ref: extension/e2e/scenarios/navigation.mjs, status: pass}]
+    verification:
+      - kind: e2e
+        ref: extension/e2e/scenarios/navigation.mjs
+        status: pass
     human_judgment: false
   - id: turns-dom
     description: FIFO DOM mutations include two identical busy announcements, empty transcript guard, offsite fallback and actual 15-second cap
-    verification: [{kind: e2e, ref: extension/e2e/scenarios/turns.mjs, status: pass}]
+    verification:
+      - kind: e2e
+        ref: extension/e2e/scenarios/turns.mjs
+        status: pass
     human_judgment: false
   - id: refusals
     description: Missing/disabled/mismatched/sensitive targets and payment proposals execute no action
     requirement: ACT-04
-    verification: [{kind: e2e, ref: extension/e2e/scenarios/refusals.mjs, status: pass}]
+    verification:
+      - kind: e2e
+        ref: extension/e2e/scenarios/refusals.mjs
+        status: pass
     human_judgment: false
   - id: privacy
     description: Fixture secrets never reach upstream, parcel numbers remain visible and proxy logs contain no bodies
     requirement: SAFE-04
-    verification: [{kind: e2e, ref: extension/e2e/scenarios/privacy.mjs, status: pass}]
+    verification:
+      - kind: e2e
+        ref: extension/e2e/scenarios/privacy.mjs
+        status: pass
     human_judgment: false
   - id: keys
     description: Extension sources/bundles and tracked files contain no key and server/.env is untracked
     requirement: PROXY-01
-    verification: [{kind: other, ref: '01-04-PLAN.md Task 3 key-absence command', status: pass}]
+    verification:
+      - kind: other
+        ref: '01-04-PLAN.md Task 3 key-absence command'
+        status: pass
     human_judgment: false
   - id: screen-reader
     description: NVDA/VoiceOver actually speaks ordered and identical messages in browse mode and with parcel-field focus
     requirement: OUT-01
-    verification: [{kind: manual_procedural, ref: '01-04-PLAN.md Task 3 screen-reader human-check', status: unknown}]
+    verification:
+      - kind: manual_procedural
+        ref: '01-04-PLAN.md Task 3 screen-reader human-check'
+        status: unknown
     human_judgment: true
     rationale: Linux Chromium DOM mutations cannot establish actual assistive-technology speech or absence of duplicate voices.
   - id: network-demo
     description: DevTools Network-tab proof on the sensitive fixture and live InPost parcel page
-    verification: [{kind: manual_procedural, ref: '01-04-PLAN.md Task 3 Network-tab human-check', status: unknown}]
+    verification:
+      - kind: manual_procedural
+        ref: '01-04-PLAN.md Task 3 Network-tab human-check'
+        status: unknown
     human_judgment: true
     rationale: The project requires the demo artifact to be inspected by a person.
   - id: live-provider
     description: Live InPost fill/search/navigation produces faithful Polish effects with measured total latency
-    verification: [{kind: manual_procedural, ref: '01-04-PLAN.md Task 3 live-site human-check', status: unknown}]
+    verification:
+      - kind: manual_procedural
+        ref: '01-04-PLAN.md Task 3 live-site human-check'
+        status: unknown
     human_judgment: true
     rationale: Real provider credentials, teammate Whisper module and human observation remain unavailable.
 actuals:

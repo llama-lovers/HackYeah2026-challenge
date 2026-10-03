@@ -5,6 +5,8 @@
 
 Conventions: code, identifiers and commits in English; every user-facing message (voice and UI) in Polish. Extension in TypeScript (MV3), proxy in Python (FastAPI).
 
+Phase 1 checkboxes track delivered implementation after all declaring plans finish. Actual screen-reader speech, clean-profile microphone permission, DevTools Network proof and live-provider/site acceptance remain pending in plan coverage and WINDOWS.md; Phase 1 is still awaiting verification.
+
 ## v1 Requirements
 
 ### Voice Input
@@ -17,7 +19,7 @@ Conventions: code, identifiers and commits in English; every user-facing message
 
 ### Speech Output
 
-- [ ] **OUT-01**: User hears every agent message through their own screen reader via a pre-rendered ARIA live region
+- [x] **OUT-01**: User hears every agent message through their own screen reader via a pre-rendered ARIA live region
 - [ ] **OUT-02**: User can switch the output mode to built-in voice (`chrome.tts`, pl-PL) when no screen reader is running; the two voices never speak at the same time
 - [ ] **OUT-03**: User can say "powtórz" to hear the last message again
 - [ ] **OUT-04**: User can say "krócej" or "dokładniej" to change verbosity (3 levels, remembered across sessions)
@@ -35,28 +37,28 @@ Conventions: code, identifiers and commits in English; every user-facing message
 ### Actions
 
 - [x] **ACT-01**: User can click an element by describing it in Polish ("kliknij Szukaj")
-- [ ] **ACT-02**: User can fill a text field by dictation; the extension fires real input/change events so the page reacts (e.g. InPost enables the search button)
+- [x] **ACT-02**: User can fill a text field by dictation; the extension fires real input/change events so the page reacts (e.g. InPost enables the search button)
 - [ ] **ACT-03**: User can scroll up, down and to the top
-- [ ] **ACT-04**: The model returns a structured action proposal (action, element id, text to say, needs-confirmation); the extension validates that the element exists, is visible and enabled, and that its role matches before executing
+- [x] **ACT-04**: The model returns a structured action proposal (action, element id, text to say, needs-confirmation); the extension validates that the element exists, is visible and enabled, and that its role matches before executing
 - [ ] **ACT-05**: Each spoken command runs at most a small bounded number of steps, then reports and waits
 - [ ] **ACT-06**: When several elements match or the label is unclear, the agent asks with numbered options (max 3) instead of guessing
-- [ ] **ACT-07**: Agent announces the action first ("Klikam Szukaj."), then re-reads the page after it settles and announces the actual effect, or says nothing changed
+- [x] **ACT-07**: Agent announces the action first ("Klikam Szukaj."), then re-reads the page after it settles and announces the actual effect, or says nothing changed
 
 ### Safety & Privacy
 
 - [ ] **SAFE-01**: Irreversible actions (payment, order, form submission other than search, deletion, account changes, legal consents) require a spoken "tak" before execution; the decision is made by a deterministic policy in the extension, and the model can only add confirmations, never remove them
 - [ ] **SAFE-02**: The confirmed action is executed exactly as proposed; "tak" is matched locally and never sent to the model for re-planning
 - [ ] **SAFE-03**: Agent never types passwords, SMS/BLIK codes or one-time codes and never attempts captcha; it stops, says why, and suggests human help
-- [ ] **SAFE-04**: Sensitive fields (password, PESEL, IBAN, card number, CVV, one-time codes) are masked inside the content script before any data leaves it; the InPost parcel number is not falsely masked
+- [x] **SAFE-04**: Sensitive fields (password, PESEL, IBAN, card number, CVV, one-time codes) are masked inside the content script before any data leaves it; the InPost parcel number is not falsely masked
 - [ ] **SAFE-05**: Barge-in: the stop shortcut (or "stop") immediately stops fallback speech, in-flight requests and pending actions
 - [ ] **SAFE-06**: Cookie-consent banners (e.g. Didomi on inpost.pl) are treated as legal consent and require "tak"
 - [ ] **SAFE-07**: User can open a local-only privacy preview showing exactly what would be sent to the model (off by default, nothing logged remotely)
 
 ### Backend Proxy
 
-- [ ] **PROXY-01**: A Python (FastAPI) proxy holds the OpenRouter API key from environment variables; no key exists in the extension or repo
+- [x] **PROXY-01**: A Python (FastAPI) proxy holds the OpenRouter API key from environment variables; no key exists in the extension or repo
 - [x] **PROXY-02**: The proxy forwards chat (Claude via OpenRouter, structured JSON output) and transcription requests, pins the model, and caps request size and tokens
-- [ ] **PROXY-03**: The proxy never logs request or response bodies
+- [x] **PROXY-03**: The proxy never logs request or response bodies
 
 ### InPost Scenario
 
@@ -108,7 +110,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | VOICE-03 | Phase 1 | Complete |
 | VOICE-04 | Phase 4 | Pending |
 | VOICE-05 | Phase 4 | Pending |
-| OUT-01 | Phase 1 | Pending |
+| OUT-01 | Phase 1 | Complete |
 | OUT-02 | Phase 4 | Pending |
 | OUT-03 | Phase 3 | Pending |
 | OUT-04 | Phase 3 | Pending |
@@ -120,22 +122,22 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PAGE-02 | Phase 3 | Pending |
 | PAGE-03 | Phase 3 | Pending |
 | ACT-01 | Phase 1 | Complete |
-| ACT-02 | Phase 1 | Pending |
+| ACT-02 | Phase 1 | Complete |
 | ACT-03 | Phase 3 | Pending |
-| ACT-04 | Phase 1 | Pending |
+| ACT-04 | Phase 1 | Complete |
 | ACT-05 | Phase 2 | Pending |
 | ACT-06 | Phase 2 | Pending |
-| ACT-07 | Phase 1 | Pending |
+| ACT-07 | Phase 1 | Complete |
 | SAFE-01 | Phase 2 | Pending |
 | SAFE-02 | Phase 2 | Pending |
 | SAFE-03 | Phase 2 | Pending |
-| SAFE-04 | Phase 1 | Pending |
+| SAFE-04 | Phase 1 | Complete |
 | SAFE-05 | Phase 4 | Pending |
 | SAFE-06 | Phase 2 | Pending |
 | SAFE-07 | Phase 4 | Pending |
-| PROXY-01 | Phase 1 | Pending |
+| PROXY-01 | Phase 1 | Complete |
 | PROXY-02 | Phase 1 | Complete |
-| PROXY-03 | Phase 1 | Pending |
+| PROXY-03 | Phase 1 | Complete |
 | INPOST-01 | Phase 2 | Pending |
 | INPOST-02 | Phase 2 | Pending |
 | INPOST-03 | Phase 2 | Pending |

@@ -178,25 +178,38 @@ export async function runParcelSearch(run: CommandRun, digits: string): Promise<
     await say(status.ok ? msg.statusSpeech(status.status) : msg.STATUS_UNREAD);
   } catch { await say(msg.STATUS_UNREAD); }
 }
+async function parcelReadback(run: CommandRun, digits: string): Promise<void> {
+  const say = async (text: string) => { if (await ownsTurn(run.turnId)) await announce(run.tabId, text); };
+  try {
+    const result: SnapshotResult = await chrome.tabs.sendMessage(run.tabId, { type: 'SNAPSHOT' }, { frameId: 0 });
+    if (!result.ok) { await say(msg.SNAPSHOT_FAILED); return; }
+    if (!pickParcelField(result.snapshot) || !pickSearchButton(result.snapshot)) { await say(msg.PARCEL_FORM_MISSING); return; }
+    await setPending(run.turnId, { kind: 'confirm_parcel', digits, id: crypto.randomUUID(), tabId: run.tabId, createdAt: Date.now(), reprompts: 0 });
+    await say(msg.parcelReadback(digitsToSpokenGroups(digits)));
+  } catch { await say(msg.SNAPSHOT_FAILED); }
+}
 export async function runCommand(turnId: string, tabId: number | undefined, rawText: string): Promise<'handoff' | void> {
   const signal = turnSignal(turnId);
   const say = async (text: string) => { if (await ownsTurn(turnId)) await announce(tabId, text); };
   const text = rawText.trim();
   if (!text) { await say(msg.NOTHING_HEARD); return; }
   const pending = await claimPending();
+  const intent = parseIntent(text);
   if (pending && pending.tabId === tabId) {
     const reply = routeReply(pending, text, Date.now());
     if (reply.kind === 'confirm' && pending.kind === 'confirm_parcel') return runParcelSearch({ turnId, tabId: tabId!, signal }, pending.digits);
     if (reply.kind === 'cancel') { await say(msg.CANCELLED); return; }
     if (reply.kind === 'reprompt') { await setPending(turnId, { ...pending, reprompts: pending.reprompts + 1 }); await say(msg.CONFIRM_REPROMPT); return; }
+    if (reply.kind === 'number') return parcelReadback({ turnId, tabId: tabId!, signal }, reply.digits);
+    if (reply.kind === 'bad_number') { await setPending(turnId, { ...pending, reprompts: pending.reprompts + 1 }); await say(reply.count === null ? msg.PARCEL_NOT_UNDERSTOOD : msg.parcelWrongLength(reply.count)); return; }
+    if (reply.kind === 'expired' && (intent.kind === 'yes' || intent.kind === 'no')) { await say(msg.CONFIRM_EXPIRED); return; }
   }
-  const intent = parseIntent(text);
   if (intent.kind === 'track_parcel') {
+    if (tabId === undefined) { await say(msg.SNAPSHOT_FAILED); return; }
     const number = wordsToDigits(intent.rest);
-    if (number.ok && isParcelDigits(number.digits) && tabId !== undefined) {
-      await setPending(turnId, { kind: 'confirm_parcel', digits: number.digits, id: crypto.randomUUID(), tabId, createdAt: Date.now(), reprompts: 0 });
-      await say(msg.parcelReadback(digitsToSpokenGroups(number.digits)));
-    } else await say(msg.NOTHING_HEARD);
+    if (number.ok && isParcelDigits(number.digits)) return parcelReadback({ turnId, tabId, signal }, number.digits);
+    await setPending(turnId, { kind: 'await_parcel_number', id: crypto.randomUUID(), tabId, createdAt: Date.now(), reprompts: 0 });
+    await say(!intent.rest ? msg.PARCEL_ASK_NUMBER : !number.ok ? msg.PARCEL_NOT_UNDERSTOOD : msg.parcelWrongLength(number.digits.length));
     return;
   }
   if (intent.kind === 'yes' || intent.kind === 'no') { await say(msg.NOTHING_TO_CONFIRM); return; }

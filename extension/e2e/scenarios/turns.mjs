@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { waitFor, waitForTarget, attach, evaluate } from '../cdp.mjs';
+import { RECORDING_CAP_MS } from '../../src/shared/limits.ts';
 export const name = 'turns';
-export const timeoutMs = 45000;
+export const timeoutMs = 60000;
 export async function run(ctx) {
   let page = await ctx.openPage('/fixtures/tracking-form.html');
   await page.evaluate(`document.querySelector('#ShipmentNumber').value='873234987612340872938732';`);
@@ -33,7 +34,7 @@ export async function run(ctx) {
   } finally { await ctx.swEval('chrome.tts.speak=__realTts;delete globalThis.__realTts;'); }
   page = await ctx.openPage('/fixtures/tracking-form.html');
   // Automatic stop has no explicit REC_STOP test payload. Override only the test
-  // transcriber URL so this 15-second capture really returns the requested phrase.
+  // transcriber URL so this capped capture really returns the requested phrase.
   const target = await waitForTarget(ctx.browser.port, t => t.url.endsWith('/offscreen/offscreen.html'));
   const session = await attach(ctx.client, target.id);
   const offscreenEval = expression => evaluate(ctx.client, session, expression);
@@ -42,9 +43,9 @@ export async function run(ctx) {
     await ctx.toggle({ stubText: 'kliknij Pokaż mapę' });
     await ctx.waitForLive(page, 'Słucham.');
     const listeningAt = Date.now();
-    await ctx.waitForLive(page, 'Przetwarzam.', 18000);
+    await ctx.waitForLive(page, 'Przetwarzam.', RECORDING_CAP_MS + 3000);
     const elapsed = Date.now() - listeningAt;
-    assert(elapsed >= 14000 && elapsed <= 18000, `automatic cap ${elapsed} ms`);
+    assert(elapsed >= RECORDING_CAP_MS - 1000 && elapsed <= RECORDING_CAP_MS + 3000, `automatic cap ${elapsed} ms`);
     await ctx.waitForLive(page, 'Klikam Pokaż mapę.');
     await ctx.waitForLive(page, 'Kliknąłem Pokaż mapę, ale na stronie nic się nie zmieniło.');
     await ctx.waitIdle();

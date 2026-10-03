@@ -4,7 +4,7 @@ export const timeoutMs = 60000;
 const digits = '873234987612340872938732';
 const readback = 'Numer przesyłki: osiem siedem trzy dwa, trzy cztery dziewięć osiem, siedem sześć jeden dwa, trzy cztery zero osiem, siedem dwa dziewięć trzy, osiem siedem trzy dwa. Potwierdzasz? Powiedz tak albo nie.';
 export async function run(ctx) {
-  const page = await ctx.openPage('/fixtures/tracking-form.html');
+  let page = await ctx.openPage('/fixtures/tracking-form.html');
   const mark = await ctx.upstreamMark();
   await ctx.speak(page, 'sprawdź status przesyłki numer 8732 3498 7612 3408 7293 8732');
   await ctx.waitForLive(page, readback); await ctx.waitIdle();
@@ -23,4 +23,31 @@ export async function run(ctx) {
   assert(!log.some(s => s.startsWith('Zmiana na stronie')));
   assert.equal(await ctx.swEval("chrome.storage.session.get('pending').then(v => v.pending === undefined)"), true);
   await ctx.waitIdle();
+  page = await ctx.openPage('/fixtures/tracking-form.html');
+  await ctx.speak(page, 'sprawdź status przesyłki numer 9999 9999 9999 9999 9999 9999');
+  await ctx.waitForLive(page, log => log.some(s => s.startsWith('Numer przesyłki: '))); await ctx.waitIdle();
+  await ctx.speak(page, 'tak');
+  await ctx.waitForLive(page, 'Strona informuje: Ups... Nie znaleźliśmy paczki o podanym numerze. Spróbuj go wpisać ponownie.'); await ctx.waitIdle();
+  page = await ctx.openPage('/fixtures/tracking-form.html');
+  await ctx.speak(page, 'sprawdź status przesyłki');
+  await ctx.waitForLive(page, 'Podaj numer przesyłki.'); await ctx.waitIdle();
+  await ctx.speak(page, 'jeden dwa trzy cztery pięć sześć siedem osiem');
+  await ctx.waitForLive(page, 'Numer przesyłki: jeden dwa trzy cztery, pięć sześć siedem osiem. Potwierdzasz? Powiedz tak albo nie.'); await ctx.waitIdle();
+  await ctx.speak(page, 'nie'); await ctx.waitForLive(page, 'Anulowałem.'); await ctx.waitIdle();
+  assert.equal(await page.evaluate("document.querySelector('#ShipmentNumber').value"), '');
+  await ctx.speak(page, 'sprawdź status przesyłki numer 1234567');
+  await ctx.waitForLive(page, 'Liczba usłyszanych cyfr: siedem. Numer przesyłki ma osiem albo dwadzieścia cztery cyfry. Powiedz sam numer jeszcze raz.'); await ctx.waitIdle();
+  await ctx.speak(page, 'anuluj'); await ctx.waitForLive(page, 'Anulowałem.'); await ctx.waitIdle();
+  await ctx.speak(page, 'sprawdź status przesyłki numer osiemset siedemdziesiąt trzy dwieście trzydzieści cztery dziewięćset osiemdziesiąt siedem sześćset dwanaście trzysta czterdzieści osiemset siedemdziesiąt dwa dziewięćset trzydzieści osiem siedemset trzydzieści dwa');
+  await ctx.waitForLive(page, readback); await ctx.waitIdle();
+  await ctx.speak(page, 'anuluj'); await ctx.waitForLive(page, 'Anulowałem.'); await ctx.waitIdle();
+  // The same string, including every leading zero, is filled and used for READ_STATUS.
+  const zero = '000000000000000000000001';
+  await ctx.speak(page, 'sprawdź status przesyłki numer ' + zero);
+  await ctx.waitForLive(page, log => log.some(s => s.startsWith('Numer przesyłki: zero zero zero zero,'))); await ctx.waitIdle();
+  await ctx.speak(page, 'tak'); await ctx.waitForLive(page, log => log.some(s => s.startsWith('Status na stronie: '))); await ctx.waitIdle();
+  assert.equal(await page.evaluate("document.querySelector('#ShipmentNumber').value"), zero);
+  assert.equal(await page.evaluate("document.querySelector('.parcel-wrapper').getAttribute('data-tracking')"), zero);
+  assert.deepEqual(await ctx.upstreamSince(mark), []);
+  assert.equal(await ctx.swEval("chrome.storage.session.get('pending').then(v => v.pending === undefined)"), true);
 }

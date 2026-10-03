@@ -17,5 +17,7 @@ export async function waitForParcelStatus(doc: Document, digits: string, capMs =
     if (status) return { ok: true, status };
     await new Promise(resolve => setTimeout(resolve, 100));
   } while (Date.now() - start < capMs);
+  const description = collapse(doc.querySelector('#typingErrorMsgContainer')?.textContent ?? '');
+  if (description) return { ok: true, status: { kind: 'error', title: '', description } };
   return { ok: false, error: 'not_found' };
 }

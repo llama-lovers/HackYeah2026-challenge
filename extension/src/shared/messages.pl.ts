@@ -1,6 +1,12 @@
 import type { RejectReason } from './validate.ts';
 import { truncate } from './snapshot-format.ts';
 import type { ParcelStatus } from './protocol.ts';
+import { spellInteger } from './polish-speech.ts';
+export const PARCEL_ASK_NUMBER = 'Podaj numer przesyłki.';
+export const PARCEL_NO_DIGITS = 'Nie usłyszałem numeru przesyłki. Powiedz sam numer.';
+export const PARCEL_NOT_UNDERSTOOD = 'Nie zrozumiałem numeru. Powiedz go cyframi, na przykład osiem siedem trzy dwa.';
+export const CONFIRM_EXPIRED = 'Minął czas na odpowiedź. Powiedz polecenie jeszcze raz.';
+export function parcelWrongLength(count: number): string { return count === 0 ? PARCEL_NO_DIGITS : `Liczba usłyszanych cyfr: ${spellInteger(count)}. Numer przesyłki ma osiem albo dwadzieścia cztery cyfry. Powiedz sam numer jeszcze raz.`; }
 export const CANCELLED = 'Anulowałem.';
 export const CONFIRM_REPROMPT = 'Powiedz tak albo nie.';
 export const NOTHING_TO_CONFIRM = 'Nie ma nic do potwierdzenia.';

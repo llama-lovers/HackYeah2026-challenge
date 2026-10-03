@@ -68,6 +68,7 @@ def test_body_free_logs_and_safe_errors(caplog):
     messages = "\n".join(record.getMessage() for record in caplog.records if record.name == "voice_agent.access")
     assert "POST /api/action -> 200" in messages and "GET /health -> 200" in messages
     assert not any(canary in messages for canary in ["CANARY-UTTERANCE-7781", "CANARY-422-5512", "CANARY-QUERY-9", "CANARY-EXC-3307"])
+    assert not any(canary in caplog.text for canary in ["CANARY-UTTERANCE-7781", "CANARY-422-5512", "CANARY-QUERY-9", "CANARY-EXC-3307"])
     for line in messages.splitlines():
         assert re.fullmatch(r"(?:GET|POST) /[a-z/]+ -> \d{3} \d+ms|unhandled RuntimeError on GET /explode", line)
 

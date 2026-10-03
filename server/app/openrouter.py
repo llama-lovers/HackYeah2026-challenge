@@ -46,3 +46,22 @@ async def chat_json(client: httpx.AsyncClient, settings: Settings, *, schema_nam
         return data
     except (ValueError, KeyError, IndexError, TypeError, AttributeError):
         raise UpstreamError("model_invalid_output") from None
+
+
+async def warm_up(client, settings) -> dict[str, str]:
+    from app.prompts import build_action_messages, build_effect_messages
+    from app.schemas import ACTION_SCHEMA, EFFECT_SCHEMA, ExecutedAction, PageDiffModel
+    calls = [
+        ("action_proposal", ACTION_SCHEMA, build_action_messages("kliknij Znajdź", 'button e1 "Znajdź"')),
+        ("effect_summary", EFFECT_SCHEMA, build_effect_messages(ExecutedAction(kind="click", name="Znajdź", role="button"), PageDiffModel())),
+    ]
+    results = {}
+    for name, schema, messages in calls:
+        try:
+            await chat_json(client, settings, schema_name=name, schema=schema, messages=messages, max_tokens=50)
+            results[name] = "ok"
+        except UpstreamError as exc:
+            results[name] = exc.code
+        except Exception:
+            results[name] = "model_invalid_output"
+    return results

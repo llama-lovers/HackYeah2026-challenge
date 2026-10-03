@@ -1,11 +1,35 @@
 """Environment-only proxy configuration; no request data is retained."""
 
 import os
+import base64
+import hashlib
+import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 SERVER_DIR = Path(__file__).resolve().parents[1]
+
+
+def extension_id_from_key(key_b64: str) -> str:
+    digest = hashlib.sha256(base64.b64decode(key_b64, validate=True)).hexdigest()[:32]
+    return "".join(chr(ord("a") + int(char, 16)) for char in digest)
+
+
+def resolve_extension_id(environ, manifest_path: Path) -> str | None:
+    extension_id = environ.get("EXTENSION_ID")
+    if extension_id:
+        if not re.fullmatch(r"[a-p]{32}", extension_id):
+            raise ValueError("invalid_extension_id")
+        return extension_id
+    if not manifest_path.is_file():
+        return None
+    try:
+        key = json.loads(manifest_path.read_text()).get("key")
+        return extension_id_from_key(key) if key else None
+    except (ValueError, TypeError, AttributeError):
+        raise ValueError("invalid_manifest_key") from None
 
 
 def load_env_file(path: Path) -> None:
@@ -56,7 +80,7 @@ class Settings:
             stt_mode=mode,
             stt_stub_text=value("STT_STUB_TEXT", cls.stt_stub_text),
             max_body_bytes=int(value("MAX_BODY_BYTES", "2097152")),
-            extension_id=value("EXTENSION_ID"),
+            extension_id=resolve_extension_id(environ, SERVER_DIR.parent / "extension" / "static" / "manifest.json"),
             allowed_hosts=tuple(dict.fromkeys(("localhost", "127.0.0.1", *[h.strip() for h in value("ALLOWED_HOSTS", "").split(",") if h.strip()]))),
             warmup_on_start=value("WARMUP_ON_START", "").casefold() in {"1", "true"},
         )

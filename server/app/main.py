@@ -1,35 +1,63 @@
 """Local proxy factory. Run with uvicorn factory mode and --no-access-log."""
 
 from contextlib import asynccontextmanager
+import logging
 
 import httpx
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
+from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.staticfiles import StaticFiles
 
 from app import stt
 from app.config import SERVER_DIR, Settings, load_env_file
-from app.openrouter import UpstreamError, chat_json
+from app.middleware import AccessLogMiddleware, BodyLimitMiddleware, OriginGuardMiddleware
+from app.openrouter import UpstreamError, chat_json, warm_up
 from app.prompts import build_action_messages, build_effect_messages
 from app.schemas import ACTION_SCHEMA, EFFECT_SCHEMA, ActionProposal, ActionRequest, EffectRequest, EffectSummary
 
 
 def create_app(settings: Settings | None = None,
                transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    # HTTPX's own informational logs include URLs; only our safe access log is used.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logger = logging.getLogger("voice_agent.startup")
     if settings is None:
         load_env_file(SERVER_DIR / ".env")
         settings = Settings.from_env()
 
     @asynccontextmanager
     async def lifespan(app):
+        if settings.extension_id:
+            logger.info("extension origin: chrome-extension://%s", settings.extension_id)
+        else:
+            logger.warning("EXTENSION_ID unresolved: all browser origins will be rejected")
         async with httpx.AsyncClient(base_url=settings.openrouter_base_url.rstrip("/") + "/",
                                     timeout=settings.openrouter_timeout_s, transport=transport) as client:
             app.state.http = client
+            if settings.warmup_on_start and settings.openrouter_api_key:
+                for name, result in (await warm_up(client, settings)).items():
+                    logger.info("warmup %s -> %s", name, result)
             yield
 
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.settings = settings
+    ext_origin = "chrome-extension://" + settings.extension_id if settings.extension_id else None
+    app.add_middleware(BodyLimitMiddleware, max_bytes=settings.max_body_bytes)
+    app.add_middleware(CORSMiddleware, allow_origins=[ext_origin] if ext_origin else [], allow_methods=["GET", "POST"], allow_headers=["content-type"])
+    app.add_middleware(OriginGuardMiddleware, allowed_origins={ext_origin} if ext_origin else set())
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(settings.allowed_hosts))
+    app.add_middleware(AccessLogMiddleware)
+    app.mount("/fixtures", StaticFiles(directory=SERVER_DIR / "fixtures", check_dir=False, html=False))
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(request: Request, exc: RequestValidationError):
+        return JSONResponse({"error": "invalid_request", "fields": [".".join(str(part) for part in err["loc"]) for err in exc.errors()]}, status_code=422)
 
     @app.get("/health")
     async def health():
@@ -76,8 +104,10 @@ def create_app(settings: Settings | None = None,
         try:
             return {"text": await run_in_threadpool(stt.transcribe, audio, mime)}
         except stt.TranscriptionError as exc:
+            logging.getLogger("voice_agent.stt").warning("%s %s", type(exc).__name__, exc.code)
             return JSONResponse({"error": exc.code}, status_code=504 if exc.code == "timeout" else 502)
-        except Exception:
+        except Exception as exc:
+            logging.getLogger("voice_agent.stt").warning("%s provider_error", type(exc).__name__)
             return JSONResponse({"error": "provider_error"}, status_code=502)
 
     return app

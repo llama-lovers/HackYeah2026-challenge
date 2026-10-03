@@ -9,7 +9,15 @@ let last: Snapshot | null = null;
 let idMap = new Map<string, { ref: WeakRef<Element>; node: SnapNode }>();
 const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'IFRAME', 'CANVAS']);
 const INTERACTIVE = new Set(['link', 'button', 'textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'menuitem', 'tab', 'switch']);
-const safe = (s: string, max = MAX_TEXT) => truncate(maskText(s), max);
+let secretValues: string[] = [];
+const safe = (s: string, max = MAX_TEXT) => {
+  for (const value of secretValues) {
+    const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Preserve complete parcel tokens even when a short numeric secret is a prefix.
+    s = s.replace(new RegExp(/^\d+$/.test(value) ? `(?<!\\d)${escaped}(?!\\d)` : escaped, 'g'), MASK);
+  }
+  return truncate(maskText(s), max);
+};
 
 function parentElement(el: Element): Element | null {
   return el.parentElement ?? (el.getRootNode() instanceof ShadowRoot ? (el.getRootNode() as ShadowRoot).host : null);
@@ -66,7 +74,7 @@ function nativeLabel(el: Element): string {
 export function computeName(el: Element): string {
   const root = el.getRootNode() as Document | ShadowRoot;
   const labelled = (el.getAttribute('aria-labelledby') ?? '').trim().split(/\s+/).filter(Boolean)
-    .map(id => root.getElementById(id)?.textContent ?? '').join(' ');
+    .map(id => { const label = root.getElementById(id); return label ? labelText(label) : ''; }).join(' ');
   if (collapse(labelled)) return collapse(labelled);
   const aria = collapse(el.getAttribute('aria-label') ?? '');
   if (aria) return aria;
@@ -88,6 +96,7 @@ function sensitive(el: Element): boolean {
     name: el.getAttribute('name') ?? '', id: el.id, label: nativeLabel(el), placeholder: el.getAttribute('placeholder') ?? '', ariaLabel: computeName(el) });
 }
 function visibleText(el: Element): string {
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return '';
   const parts: string[] = [];
   for (const child of el.childNodes) {
     if (child.nodeType === Node.TEXT_NODE) parts.push(child.textContent ?? '');
@@ -107,6 +116,16 @@ function states(el: Element): SnapState {
   return state;
 }
 export function takeSnapshot(doc: Document = document, opts?: { excludeRoot?: Element | null }): Snapshot {
+  // Include hidden and shadow-root fields: pages can echo their values elsewhere.
+  const secrets = new Set<string>();
+  const collect = (root: Document | ShadowRoot) => {
+    for (const el of root.querySelectorAll('*')) {
+      if ((el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) && sensitive(el) && el.value) secrets.add(el.value);
+      if (el.shadowRoot) collect(el.shadowRoot);
+    }
+  };
+  collect(doc);
+  secretValues = [...secrets].sort((a, b) => b.length - a.length);
   const candidates: { node: SnapNode; el: Element; priority: number }[] = [];
   const walk = (el: Element) => {
     if (SKIP.has(el.tagName) || el.id === LIVE_REGION_ID || el === opts?.excludeRoot || !isElementVisible(el)) return;

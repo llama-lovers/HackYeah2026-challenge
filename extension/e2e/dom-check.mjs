@@ -91,6 +91,12 @@ try {
   const renamed = await page.evaluate(`(() => { document.body.innerHTML='<button>Lookup</button>';const s=__snapTest.takeSnapshot(),id=s.nodes[0].id;document.querySelector('button').textContent='Zapłać';return __snapTest.validateProposal({action:'click',target:id,text:'',needs_confirmation:false,say:''},__snapTest.resolveTarget(id,s.epoch).target); })()`);
   assert.deepEqual(renamed, { ok: false, reason: 'irreversible' });
   console.log('PASS dom-check: live irreversible name');
+
+  await page.evaluate(`document.body.innerHTML='<main><div role="status"><textarea autocomplete="current-password">Tajne!Haslo1</textarea><button aria-label="Tajne!Haslo1">Szukaj</button></div><h2>Hasło Tajne!Haslo1 <textarea autocomplete="one-time-code">731904</textarea></h2><input type="password" value="Tajne!Haslo1" aria-label="Hasło Tajne!Haslo1"><input autocomplete="cc-csc" value="846"><p>Kod 846 i 731904</p><div id="secret-label"><textarea autocomplete="new-password">EchoSecret</textarea>Etykieta</div><button aria-labelledby="secret-label">Szukaj</button><input placeholder="Numer przesyłki" value="123456789012345678901234"></main>'`);
+  const privateSnapshot = await page.evaluate(`__snapTest.takeSnapshot()`);
+  for (const secret of ['Tajne!Haslo1', '731904', '846', 'EchoSecret']) assert.ok(!JSON.stringify(privateSnapshot).includes(secret), 'aggregated secret: ' + secret);
+  assert.ok(JSON.stringify(privateSnapshot).includes('123456789012345678901234'));
+  console.log('PASS dom-check: secret echoes, aggregates and referenced labels');
 } catch (error) {
   console.error(`FAIL dom-check: ${error.stack}\n${lastText}`); process.exitCode = 1;
 } finally {

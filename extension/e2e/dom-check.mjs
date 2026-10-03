@@ -143,6 +143,28 @@ try {
   const focusRace = await page.evaluate(`(async () => { const s=__snapTest.takeSnapshot(), id=s.nodes.find(n=>n.role==='textbox').id; const result=await __snapTest.execute(s.epoch,{action:'fill',target:id,text:'873234987612340872938732',needs_confirmation:false,say:''},{host:document.querySelector('#host'),announce(){}}); return {result,value:document.querySelector('#f').value}; })()`);
   assert.deepEqual(focusRace, { result: { ok: false, reason: 'sensitive_fill' }, value: '' });
   console.log('PASS dom-check: focus handler cannot make the native write sensitive');
+  // A control that changes meaning after the snapshot (same element, same id) is refused instead of reinterpreted.
+  const drift = await page.evaluate(`(() => {
+    const out = {};
+    const check = (key, html, mutate, action = 'click', text = '') => {
+      document.body.innerHTML = html;
+      const s = __snapTest.takeSnapshot(), node = s.nodes.find(n => n.kind === 'interactive' && (action === 'fill' ? n.role === 'textbox' : n.role !== 'textbox'));
+      const before = __snapTest.validateProposal({action,target:node.id,text,needs_confirmation:false,say:''}, __snapTest.resolveTarget(node.id,s.epoch).target);
+      mutate();
+      out[key] = {before, after: __snapTest.validateProposal({action,target:node.id,text,needs_confirmation:false,say:''}, __snapTest.resolveTarget(node.id,s.epoch).target)};
+    };
+    check('href', '<a href="/a">Moje zamówienia</a>', () => document.querySelector('a').setAttribute('href', '/b'));
+    check('purpose', '<input placeholder="Numer przesyłki">', () => document.querySelector('input').setAttribute('placeholder', 'Szukaj w serwisie'), 'fill', '123');
+    check('inputType', '<input placeholder="Numer przesyłki">', () => document.querySelector('input').setAttribute('type', 'search'), 'fill', '123');
+    check('rename', '<button type="button">Pokaż mapę</button>', () => { document.querySelector('button').textContent = 'Pokaż pomoc'; });
+    check('formAction', '<form method="get" action="/szukaj"><input placeholder="Numer przesyłki"><button>Znajdź</button></form>', () => document.querySelector('form').setAttribute('action', '/inne'));
+    return out;
+  })()`);
+  for (const [key, { before, after }] of Object.entries(drift)) { assert.equal(before.ok, true, 'baseline ' + key); assert.deepEqual(after, { ok: false, reason: 'stale' }, 'drift ' + key); }
+  // The name changing while the pre-announcement is spoken must not execute against the repurposed control.
+  const renamedDuringDelay = await page.evaluate(`(async () => { document.body.innerHTML='<button type="button">Pokaż mapę</button><div id="host"></div>'; window.__clicked=false; document.querySelector('button').addEventListener('click', () => { window.__clicked=true; }); const s=__snapTest.takeSnapshot(), id=s.nodes.find(n=>n.role==='button').id; const result=await __snapTest.execute(s.epoch,{action:'click',target:id,text:'',needs_confirmation:false,say:''},{host:document.querySelector('#host'),announce(){ document.querySelector('button').textContent='Pokaż pomoc'; }}); return {result,clicked:window.__clicked}; })()`);
+  assert.deepEqual(renamedDuringDelay, { result: { ok: false, reason: 'stale' }, clicked: false });
+  console.log('PASS dom-check: semantic drift is refused before the action');
 } catch (error) {
   console.error(`FAIL dom-check: ${error.stack}\n${lastText}`); process.exitCode = 1;
 } finally {

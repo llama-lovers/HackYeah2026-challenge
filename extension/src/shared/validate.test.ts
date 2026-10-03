@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { validateProposal } from './validate.ts';
 import type { Proposal, ResolvedTarget, RejectReason } from './validate.ts';
 const proposal: Proposal = { action: 'click', target: 'e1', text: '', needs_confirmation: false, say: '' };
-const target: ResolvedTarget = { exists: true, epochMatches: true, connected: true, visible: true, disabled: false, role: 'button', sensitive: false, name: 'Znajdź', maxLength: null, submitsNonLookupForm: false, sideEffectSignals: false, knownSafe: true };
+const target: ResolvedTarget = { exists: true, epochMatches: true, connected: true, visible: true, disabled: false, role: 'button', sensitive: false, name: 'Znajdź', maxLength: null, submitsNonLookupForm: false, sideEffectSignals: false, knownSafe: true, drifted: false };
 const cases: [RejectReason, Partial<Proposal>, Partial<ResolvedTarget> | null][] = [
   ['unknown_action', { action: 'navigate' }, {}], ['not_found', {}, null],
   ['not_found', {}, { exists: false }], ['stale', {}, { epochMatches: false }],
@@ -39,4 +39,7 @@ test('rejects hidden side-effect signals reported by the content script', () => 
 });
 test('refuses clicks without a positive safe classification (CR-03)', () => {
   assert.deepEqual(validateProposal(proposal, { ...target, name: 'Dalej', knownSafe: false }), { ok: false, reason: 'irreversible' });
+});
+test('refuses a control whose semantic identity drifted since the snapshot (CR-09)', () => {
+  for (const action of ['click', 'fill']) assert.deepEqual(validateProposal({ ...proposal, action, text: 'x' }, { ...target, role: action === 'click' ? 'button' : 'textbox', drifted: true }), { ok: false, reason: 'stale' });
 });

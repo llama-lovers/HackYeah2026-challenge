@@ -1,5 +1,5 @@
 import { createAnnouncer } from './live-region.ts';
-import { takeSnapshot } from './snapshot.ts';
+import { takeSnapshot, getDocumentId } from './snapshot.ts';
 import { execute } from './executor.ts';
 import { startSettleWatch } from './settle.ts';
 import { diffSnapshots } from '../shared/diff.ts';
@@ -14,10 +14,12 @@ if (!globals.__voiceAgentInitialized) {
       case 'PING': respond({ ok: true }); break;
       case 'ANNOUNCE': announcer.announce(message.text); respond({ ok: true }); break;
       case 'SNAPSHOT':
-        try { respond({ ok: true, snapshot: takeSnapshot(document, { excludeRoot: announcer.host }) }); }
+        try { respond({ ok: true, snapshot: takeSnapshot(document, { excludeRoot: announcer.host }), docId: getDocumentId() }); }
         catch { respond({ ok: false, error: 'snapshot_failed' }); }
         break;
       case 'EXECUTE':
+        // A proposal made against another document instance (reload, SPA hard navigation) must not act here.
+        if (message.docId !== getDocumentId()) { respond({ ok: false, reason: 'stale' }); break; }
         void execute(message.epoch, message.proposal, announcer, async () => {
           try { return ((await chrome.runtime.sendMessage({ type: 'EXECUTING', turnId: message.turnId, jobId: message.jobId })) as { ok?: boolean } | undefined)?.ok === true; } catch { return false; }
         }).then(respond).catch(() => respond({ ok: false, reason: 'not_found' }));

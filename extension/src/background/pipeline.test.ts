@@ -74,7 +74,7 @@ test('stopping a recording refreshes the processing deadline (CR-06)', async () 
   assert.equal(sent[0].turnId, 'a');
 });
 test('stale recovery aborts the in-flight model request of the abandoned turn (CR-06)', async () => {
-  tabHandler = (_tab, m) => m.type === 'SNAPSHOT' ? { ok: true, snapshot } : { ok: true };
+  tabHandler = (_tab, m) => m.type === 'SNAPSHOT' ? { ok: true, docId: 'doc-1', snapshot } : { ok: true };
   let aborted = false;
   g.fetch = (_url: string, init: RequestInit) => new Promise((_resolve, reject) => init.signal!.addEventListener('abort', () => { aborted = true; reject(new Error('aborted')); }));
   await pipeline.handleToggle({ id: 7 } as chrome.tabs.Tab);
@@ -99,7 +99,7 @@ const withProposal = (proposal: object, effect = 'Kliknąłem Znajdź. Status: w
 const clickProposal = { action: 'click', target: 'e1', text: '', needs_confirmation: false, say: '' };
 const announced = () => tabCalls.filter(c => c.message.type === 'ANNOUNCE').map(c => c.message.text as string);
 async function startTurn(onExecute: (tabId: number, message: any) => unknown) {
-  tabHandler = (tabId, m) => m.type === 'SNAPSHOT' ? { ok: true, snapshot: { ...snapshot, nodes: [button] } } : m.type === 'EXECUTE' ? onExecute(tabId, m) : m.type === 'SETTLE_DIFF' ? { ok: true, diff: { added: ['Status: w drodze'], removed: [], changed: [], alerts: [] } } : { ok: true };
+  tabHandler = (tabId, m) => m.type === 'SNAPSHOT' ? { ok: true, docId: 'doc-1', snapshot: { ...snapshot, nodes: [button] } } : m.type === 'EXECUTE' ? onExecute(tabId, m) : m.type === 'SETTLE_DIFF' ? { ok: true, diff: { added: ['Status: w drodze'], removed: [], changed: [], alerts: [] } } : { ok: true };
   await pipeline.handleToggle({ id: 7 } as chrome.tabs.Tab);
   const state = await turn();
   await pipeline.handleToggle({ id: 7 } as chrome.tabs.Tab);
@@ -176,4 +176,11 @@ test('a none proposal fails locally and releases the turn without any job (CR-08
   await pipeline.handleOffscreenMessage(message(id, { type: 'TRANSCRIPT', text: 'abc' }));
   assert.equal(job(), undefined); assert.equal((await turn()).phase, 'idle');
   assert(announced().includes('Nie rozumiem.'));
+});
+test('EXECUTE is bound to the document that produced the snapshot (CR-09)', async () => {
+  withProposal(clickProposal);
+  let executeMessage: any;
+  const id = await startTurn((_tab, m) => { executeMessage = m; return { ok: true, kind: 'none' }; });
+  await pipeline.handleOffscreenMessage(message(id, { type: 'TRANSCRIPT', text: 'kliknij Znajdź' }));
+  assert.equal(executeMessage.docId, 'doc-1');
 });

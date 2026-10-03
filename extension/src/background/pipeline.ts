@@ -149,7 +149,7 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
     await chrome.storage.session.set({ [JOB]: job });
   }
   let executed: ExecuteResult;
-  try { executed = await chrome.tabs.sendMessage(tabId!, { type: 'EXECUTE', epoch: result.snapshot.epoch, proposal, turnId, jobId }, { frameId: 0 }); }
+  try { executed = await chrome.tabs.sendMessage(tabId!, { type: 'EXECUTE', epoch: result.snapshot.epoch, proposal, turnId, jobId, docId: result.docId }, { frameId: 0 }); }
   catch {
     // Only an action the page proved it started can be followed by a navigation; any other delivery failure ends the turn locally.
     const job = await getJob();

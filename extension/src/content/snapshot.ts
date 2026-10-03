@@ -6,8 +6,11 @@ import { IRREVERSIBLE_NAME_RE, SIDE_EFFECT_RE, LOOKUP_RE, BENIGN_UI_RE } from '.
 import { LIVE_REGION_ID } from '../shared/protocol.ts';
 
 let epoch = 0;
+// Identifies this document instance; requests bound to a snapshot are only valid in the document that produced it.
+const documentId = crypto.randomUUID();
+export function getDocumentId(): string { return documentId; }
 let last: Snapshot | null = null;
-let idMap = new Map<string, { ref: WeakRef<Element>; node: SnapNode }>();
+let idMap = new Map<string, { ref: WeakRef<Element>; node: SnapNode; identity: string }>();
 const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'IFRAME', 'CANVAS']);
 const INTERACTIVE = new Set(['link', 'button', 'textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'menuitem', 'tab', 'switch']);
 let secretValues: string[] = [];
@@ -196,9 +199,9 @@ export function takeSnapshot(doc: Document = document, opts?: { excludeRoot?: El
   if (doc.body) walk(doc.body);
   const truncated = candidates.length > MAX_NODES;
   const selected = new Set(candidates.map((c, order) => ({ ...c, order })).sort((a, b) => a.priority - b.priority || a.order - b.order).slice(0, MAX_NODES).map(c => c.order));
-  const nextMap = new Map<string, { ref: WeakRef<Element>; node: SnapNode }>();
+  const nextMap = new Map<string, { ref: WeakRef<Element>; node: SnapNode; identity: string }>();
   const nodes = candidates.filter((_c, index) => selected.has(index)).map(({ node, el }) => {
-    if (node.kind === 'interactive') { node.id = `e${nextMap.size + 1}`; nextMap.set(node.id, { ref: new WeakRef(el), node }); }
+    if (node.kind === 'interactive') { node.id = `e${nextMap.size + 1}`; nextMap.set(node.id, { ref: new WeakRef(el), node, identity: identityOf(el) }); }
     return node;
   });
   const snapshot: Snapshot = { epoch: epoch + 1, path: safe(stripQuery(doc.location.pathname)), title: safe(doc.title), nodes, truncated };
@@ -256,6 +259,16 @@ function sideEffectSignals(el: Element): boolean {
 // Any failure while collecting signals is itself ambiguous, so it counts as a signal.
 function safeSideEffectSignals(el: Element): boolean { try { return sideEffectSignals(el); } catch { return true; } }
 function safeDecode(text: string): string { try { return decodeURIComponent(text); } catch { return text; } }
+// Semantic identity of a snapshot target: what the model's proposal was about. Any change (role, name, purpose, destination, form
+// association) means the id now denotes a different control, which must be re-proposed rather than silently reinterpreted.
+function identityOf(el: Element): string {
+  const control = el instanceof HTMLButtonElement || el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement ? el : null;
+  const form = control?.form ?? closestOf(el, 'form');
+  return JSON.stringify([roleOf(el), computeName(el), tagOf(el), getAttr(el, 'type'), getAttr(el, 'name'), getAttr(el, 'placeholder'), getAttr(el, 'autocomplete'),
+    el instanceof HTMLAnchorElement ? el.href : null, getAttr(el, 'formaction'), getAttr(el, 'formmethod'),
+    form ? [getAttr(form, 'action'), getAttr(form, 'method'), getAttr(form, 'id')] : null]);
+}
+function safeDrifted(el: Element, identity: string): boolean { try { return identityOf(el) !== identity; } catch { return true; } }
 export function resolveTarget(id: string, requestedEpoch: number): { target: ResolvedTarget | null; element: Element | null; node: SnapNode | null } {
   const entry = idMap.get(id), element = entry?.ref.deref() ?? null;
   if (!entry || !element) return { target: null, element: null, node: null };
@@ -264,6 +277,6 @@ export function resolveTarget(id: string, requestedEpoch: number): { target: Res
   const maxLength = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.maxLength : -1;
   return { element, node, target: { exists: true, epochMatches: requestedEpoch === epoch, connected: connectedOf(element),
     visible: isElementVisible(element), disabled: isElementDisabled(element), role, sensitive: !!(entry.node.state?.sensitive || liveState.sensitive), name,
-    maxLength: maxLength >= 0 ? maxLength : null, submitsNonLookupForm: submitsNonLookupForm(element), sideEffectSignals: safeSideEffectSignals(element), knownSafe: safeKnownSafeClick(element) } };
+    maxLength: maxLength >= 0 ? maxLength : null, submitsNonLookupForm: submitsNonLookupForm(element), drifted: safeDrifted(element, entry.identity), sideEffectSignals: safeSideEffectSignals(element), knownSafe: safeKnownSafeClick(element) } };
 }
 export function getLastSnapshot(): Snapshot | null { return last; }

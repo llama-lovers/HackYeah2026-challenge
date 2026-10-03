@@ -1,0 +1,26 @@
+[project]
+name = "parakeet-local-runtime"
+version = "0.2.0"
+description = "Isolated NeMo worker; API runs on Python 3.14"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+
+    "torch==2.11.0+cu128; sys_platform == 'linux'",
+    "nemo-toolkit[asr]==3.0.0; sys_platform == 'linux'",
+    "numba-cuda[cu12]; sys_platform == 'linux'",
+    "cuda-python>=12,<13; sys_platform == 'linux'",
+    "setuptools==80.9.0; sys_platform == 'linux'",
+]
+
+[tool.uv]
+package = false
+required-version = ">=0.12.19"
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }

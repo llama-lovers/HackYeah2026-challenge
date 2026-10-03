@@ -1,0 +1,23 @@
+[project]
+name = "parakeet-websocket-asr"
+version = "0.2.0"
+description = "WebSocket ASR with local NeMo and OpenRouter backends"
+requires-python = ">=3.14,<3.15"
+dependencies = [
+    "fastapi==0.142.2",
+    "uvicorn[standard]==0.54.0",
+    "webrtcvad-wheels==2.0.14.post1",
+    "websockets==15.0.1",
+    "httpx==0.28.1",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.4.2,<10"]
+
+[tool.uv]
+package = false
+required-version = ">=0.12.19"
+environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'win32'",
+]

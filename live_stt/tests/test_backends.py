@@ -25,9 +25,9 @@ def test_remote_factory_does_not_import_nemo(monkeypatch):
 
 
 def test_local_factory_selects_local_engine(monkeypatch):
-    import types
-    monkeypatch.setitem(sys.modules, "asr", types.SimpleNamespace(ParakeetEngine=FakeEngine))
-    assert engine_class("local") is FakeEngine
+    from local_engine import LocalWorkerEngine
+    monkeypatch.setitem(sys.modules, "asr", None)
+    assert engine_class("local") is LocalWorkerEngine
 
 
 def test_remote_websocket_vad_final_and_end_drain():

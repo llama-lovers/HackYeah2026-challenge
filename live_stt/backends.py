@@ -3,8 +3,8 @@
 
 def engine_class(backend):
     if backend == "local":
-        from asr import ParakeetEngine
-        return ParakeetEngine
+        from local_engine import LocalWorkerEngine
+        return LocalWorkerEngine
     if backend == "openrouter":
         from openrouter_engine import OpenRouterEngine
         return OpenRouterEngine

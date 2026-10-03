@@ -1,4 +1,4 @@
 #!/bin/sh
 set -eu
 cd "$(dirname "$0")"
-exec python3 run.py start
+exec uv run --locked --no-dev run.py start

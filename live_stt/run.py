@@ -1,4 +1,4 @@
-"""Uruchamianie obu trybów tą samą komendą; tylko standardowy Python 3.10+."""
+"""Uruchamianie obu trybów tą samą komendą; Python 3.14 zarządzany przez uv."""
 import argparse
 import os
 from pathlib import Path

@@ -4,8 +4,15 @@ Jeden serwer WebSocket, ten sam klient GUI i przełącznik w `config.env`.
 
 ## Uruchomienie na Windows
 
-Wymagane: Docker Desktop z kontenerami Linux i Python 3.10+ do skryptu
-uruchamiającego. Skrypt nie potrzebuje żadnych bibliotek pip.
+Wymagane: Docker Desktop z kontenerami Linux oraz uv >= 0.12.19.
+API i skrypt uruchamiający używają Pythona 3.14.7. W wariancie lokalnym
+sam model działa w izolowanym procesie Python 3.13.15 (wyjaśnienie poniżej). `uv` pobiera właściwy
+interpreter na hoście, jeśli nie jest zainstalowany; nie trzeba podmieniać
+systemowego Pythona. Instalacja uv: https://docs.astral.sh/uv/getting-started/installation/
+
+Źródłem zależności jest `pyproject.toml`, a dokładne wersje i sumy kontrolne
+znajdują się w `uv.lock`. Instalacja w Dockerze używa `uv sync --locked`;
+nie aktualizuje samodzielnie wersji przy każdym budowaniu.
 
 1. Rozpakuj folder. Jeśli zastępujesz poprzednią wersję, zachowaj swój klucz
    i wpisz go do nowego `config.env`. Nie używaj równolegle starego serwera
@@ -14,13 +21,13 @@ uruchamiającego. Skrypt nie potrzebuje żadnych bibliotek pip.
 3. Uruchom `start.bat` albo w folderze projektu:
 
 ```bat
-python run.py start
+uv run --locked --no-dev run.py start
 ```
 
 4. Logi:
 
 ```bat
-python run.py logs
+uv run --locked --no-dev run.py logs
 ```
 
 5. W poprzednim kliencie GUI Parakeet ustaw:
@@ -58,13 +65,23 @@ ENABLE_PARTIALS=true
 Klucz OpenRouter nie jest wtedy potrzebny ani używany. Model jest ładowany
 przez NeMo w kontenerze na komputerze/serwerze, na którym działa Docker.
 Pierwsze uruchomienie pobiera biblioteki oraz model i może potrwać znacznie
- dłużej. Wagi są przechowywane w wolumenie `parakeet-cache`.
+dłużej. Wagi są przechowywane w wolumenie `parakeet-cache`.
 
 Tryb CUDA wymaga GPU NVIDIA, zgodnego sterownika i udostępnienia GPU Dockerowi
 (na Linuksie NVIDIA Container Toolkit; na Windows odpowiednia konfiguracja
 Docker Desktop/WSL2). Skrypt automatycznie dodaje `compose.gpu.yaml`.
 Możesz ustawić `DEVICE=cpu`: wtedy nie rezerwuje GPU, lecz transkrypcja może
 być wolniejsza. Lokalny obraz pozostaje duży, bo zawiera PyTorch i NeMo.
+API nadal działa na Pythonie 3.14.7, a proces NeMo na Pythonie 3.13.15.
+Komunikacja odbywa się przez prywatne potoki procesu; nie dochodzi nowy port.
+Powód: wymagany przez NeMo dodatek `nv-one-logger-pytorch-lightning-integration`
+2.3.1 deklaruje Python <3.14. Nie zmieniamy metadanych cudzej biblioteki i nie
+pomijamy sprawdzania zależności. Oba środowiska mają własne pyproject.toml,
+uv.lock i .python-version. Nie jest to migracja całego stosu NeMo do 3.14.
+Zestaw lokalny zaktualizowano do NeMo 3.0.0 oraz PyTorch 2.11.0 z CUDA 12.8.
+Pozostałe wersje modelu (w tym NumPy) są zapisane w local_runtime/uv.lock. Instalacja tego wariantu
+jest przewidziana dla Linux x86_64, także w Docker Desktop na Windows x64.
+Tryb OpenRouter i skrypt uruchamiający nie instalują tych dużych zależności.
 
 Pozostawiono precyzję ładowania oryginalnego silnika; ta zmiana nie jest
 optymalizacją VRAM ani gwarancją działania na karcie 4 GB.
@@ -74,7 +91,7 @@ optymalizacją VRAM ani gwarancją działania na karcie 4 GB.
 Zmień `ASR_BACKEND` w `config.env`, zapisz i ponownie uruchom:
 
 ```bat
-python run.py start
+uv run --locked --no-dev run.py start
 ```
 
 Skrypt wybiera etap budowania obrazu oraz rezerwację GPU, a następnie odtwarza
@@ -102,8 +119,8 @@ Lokalny CUDA (z `ASR_BACKEND=local` i `DEVICE=cuda`):
 docker compose --env-file config.env -f compose.yaml -f compose.gpu.yaml up -d --build --force-recreate
 ```
 
-Na Linuxie: `python3 run.py start` lub `sh start.sh`.
-Zatrzymanie: `python run.py stop`. Nie usuwa pobranych modeli.
+Na Linuxie: `uv run --locked --no-dev run.py start` lub `sh start.sh`.
+Zatrzymanie: `uv run --locked --no-dev run.py stop`. Nie usuwa pobranych modeli.
 
 ## Zachowanie transkrypcji
 
@@ -178,16 +195,62 @@ curl http://127.0.0.1:7000/health
 
 Wynik pokazuje aktywne `backend`, `model` i `device`.
 
-Przeszło 30 testów: wspólny protokół WS, odbieranie podczas inferencji,
+Przeszło 32 testy na Pythonie 3.14.7: wspólny protokół WS, odbieranie podczas inferencji,
 VAD, partial/final, finalizacja, limity, wybór backendu, konstrukcja WAV i HTTP,
 błędy OpenRouter i dobór GPU przez skrypt. Dodatkowo sprawdzono poprawianie
 partial przez rosnące żądania HTTP oraz odbieranie audio i zastępowanie starych
-hipotez podczas wolnej odpowiedzi usługi. OpenRouter był symulowany.
+hipotez podczas wolnej odpowiedzi usługi, protokół procesu NeMo, oddzielenie
+logów od wyników i anulowanie klienta bez mieszania odpowiedzi. OpenRouter
+i inferencja w testach były symulowane.
+Dodatkowo sprawdzono rzeczywisty start Uvicorna i połączenie WebSocket na
+Pythonie 3.14, komunikację między Pythonem 3.14 i 3.13, import NeMo z PyTorch
+2.11.0+cu128 na Pythonie 3.13.15 oraz `uv pip check` dla obu środowisk.
+Oba lockfile przeszły `uv lock --check`. Sprawdzono również dobór zależności
+API dla Windows x64 (bez uruchamiania na fizycznym Windowsie).
 Nie wykonano płatnego żądania, budowania obrazów ani inferencji na fizycznym GPU.
 
 Testy deweloperskie:
 
 ```bat
-python -m pip install -r requirements-test.txt
-python -m pytest -q
+uv sync --locked
+uv run --locked pytest -q
 ```
+
+
+## Praca z uv
+
+- `pyproject.toml` — nazwa projektu, Python 3.14 i deklaracje zależności.
+- `.python-version` — interpreter 3.14.7 wybierany przez uv.
+- `uv.lock` — wygenerowany lockfile API; dodaj go do repozytorium.
+- `local_runtime/` — drugi pyproject.toml, uv.lock i .python-version dla procesu NeMo.
+- `uv sync --locked` — środowisko API i narzędzia testowe.
+- `uv sync --locked --no-dev` — samo API.
+- `uv sync --project local_runtime --locked` — osobne środowisko NeMo (Linux x86_64, Python 3.13.15).
+- `uv add nazwa-pakietu` — świadoma zmiana zależności i lockfile.
+- `uv lock --check` — kontrola zgodności pyproject.toml z uv.lock.
+
+Pliki requirements-*.txt zostały usunięte: nie utrzymujemy dwóch niezależnych
+list zależności. Nie dodawaj do Git `.venv`, cache ani config.env z kluczem.
+
+Uruchomienie bez Dockera (OpenRouter):
+
+```bat
+uv run --locked --no-dev --env-file config.env server.py
+```
+
+Lokalny silnik poza Dockerem wymaga Linux x86_64 i bibliotek systemowych
+ffmpeg, libsndfile1, sox oraz ewentualnie kompilatora do zależności źródłowych:
+
+```sh
+uv sync --project local_runtime --locked
+uv run --locked --no-dev --env-file config.env server.py
+```
+
+Na Windows natywny tryb lokalny NeMo nie jest celem tej konfiguracji — użyj
+wariantu Docker. Istniejącego klienta GUI nie migrowano; łączy się bez zmian
+przez ten sam WebSocket.
+
+
+Pełna migracja samego NeMo do 3.14 wymaga zgodnego wydania zależności upstream.
+Po jego wydaniu można połączyć środowiska ponownie. Obecne rozdzielenie zachowuje
+Python 3.14 dla API i obsługę obu backendów bez ignorowania ograniczeń pakietów.

@@ -49,7 +49,7 @@ Plans:
 
 ### Phase 2: Safe InPost Parcel Tracking
 
-**Goal**: A blind user can check an InPost parcel's status by voice from start to finish, and the agent never takes an irreversible, secret-entering or ambiguous step without asking first.
+**Goal**: As a blind user, I want to check an InPost parcel's status by voice from start to finish, so that the agent never takes an irreversible, secret-entering or ambiguous step without asking me first.
 **Mode:** mvp
 **Depends on**: Phase 1
 **Requirements**: SAFE-01, SAFE-02, SAFE-03, SAFE-06, ACT-05, ACT-06, INPOST-01, INPOST-02, INPOST-03, OUT-05
@@ -60,16 +60,16 @@ Plans:
   4. When asked to type a password, an SMS/BLIK or one-time code, or to get past a captcha, the agent stops, says why, and suggests asking a person for help.
   5. When several elements match a description, the agent asks with at most 3 numbered options instead of guessing, and no single command runs more than a small fixed number of steps before reporting and waiting.
 
-**Plans**: 3 plans
+**Plans**: 3/3 plans executed
 Plans:
 **Wave 1**
-- [ ] 02-01-PLAN.md — "Sprawdź status przesyłki numer …" end to end: Polish words to digits, digit-group readback, local "tak", fill + Znajdź, verbatim "Status na stronie: …"; recovery dialog, 25 s recording cap, natural Polish numbers (OUT-05), step budget (ACT-05)
+- [x] 02-01-PLAN.md — "Sprawdź status przesyłki numer …" end to end: Polish words to digits, digit-group readback, local "tak", fill + Znajdź, verbatim "Status na stronie: …"; recovery dialog, 25 s recording cap, natural Polish numbers (OUT-05), step budget (ACT-05)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 02-02-PLAN.md — Irreversible actions and cookie consent (Didomi) need a locally matched "tak"; the stored proposal runs exactly once with a local effect and no further model request; dialog failure paths proven
+- [x] 02-02-PLAN.md — Irreversible actions and cookie consent (Didomi) need a locally matched "tak"; the stored proposal runs exactly once with a local effect and no further model request; dialog failure paths proven
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 02-03-PLAN.md — Numbered choices (strict `choose` schema + duplicate-name guard, max 3, choice -> confirmation chain) and refusals of secrets and captchas before any network call
+- [x] 02-03-PLAN.md — Numbered choices (strict `choose` schema + duplicate-name guard, max 3, choice -> confirmation chain) and refusals of secrets and captchas before any network call
 
 **Notes**: Research flag: confirm with a real tracking number how InPost renders results (XHR vs reload) and how the Didomi banner behaves on a clean profile.
 
@@ -112,6 +112,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 (Phase 3 may start alongsid
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Voice-to-Effect Vertical Slice | 4/4 | In Progress|  |
-| 2. Safe InPost Parcel Tracking | 0/3 | Planned | - |
+| 2. Safe InPost Parcel Tracking | 3/3 | In Progress|  |
 | 3. Page Exploration & Conversation | 0/TBD | Not started | - |
 | 4. Audio Control & Accessible Settings | 0/TBD | Not started | - |

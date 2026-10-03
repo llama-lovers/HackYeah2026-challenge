@@ -11,7 +11,9 @@
     "type": "module"
   },
   "permissions": [
+    "activeTab",
     "offscreen",
+    "scripting",
     "storage",
     "tts"
   ],

@@ -36,10 +36,27 @@ export async function ensureOffscreen(): Promise<void> {
 export async function ping(tabId: number): Promise<boolean> {
   try { return (await chrome.tabs.sendMessage(tabId, { type: 'PING' }, { frameId: 0 })).ok === true; } catch { return false; }
 }
-export function isSupportedUrl(url?: string): boolean {
+// Ordinary top-level documents only. Browser-internal pages, extension stores, missing and malformed URLs never get a recording session.
+export function isAccessibleUrl(url?: string): boolean {
   if (!url) return false;
-  const u = new URL(url);
-  return ['https://inpost.pl', 'https://www.inpost.pl'].includes(u.origin) || (u.origin === new URL(__PROXY_URL__).origin && u.pathname.startsWith('/fixtures/'));
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    if (u.hostname === 'chromewebstore.google.com' || (u.hostname === 'chrome.google.com' && u.pathname.startsWith('/webstore')) || (u.hostname === 'microsoftedge.microsoft.com' && u.pathname.startsWith('/addons'))) return false;
+    return true;
+  } catch { return false; }
+}
+// Runs on an explicit keyboard command (the activeTab grant): ping frame 0, inject the packaged content bundle into the isolated world when missing,
+// ping again. Failures are spoken through the fallback voice because no page receiver may exist; recording must not start after one.
+export async function preparePageAccess(tab: chrome.tabs.Tab): Promise<boolean> {
+  const tabId = tab.id;
+  if (tabId === undefined || !isAccessibleUrl(tab.url)) { speakTts(msg.PAGE_UNSUPPORTED); return false; }
+  if (await ping(tabId)) return true;
+  try { await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: ['content/content.js'], world: 'ISOLATED' }); }
+  catch { speakTts(msg.PAGE_ACCESS_FAILED); return false; }
+  if (await ping(tabId)) return true;
+  speakTts(msg.PAGE_ACCESS_FAILED);
+  return false;
 }
 export function speakTts(text: string): void { chrome.tts.speak(text, { lang: 'pl-PL', rate: 1.0 }); }
 export async function announce(tabId: number | undefined, text: string): Promise<void> {
@@ -88,11 +105,7 @@ async function toggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promi
     if (state.phase !== 'idle') { abortTurn(state.id); await chrome.storage.session.remove(SESSION_KEYS.pendingEffect); }
     // Reserve the recording owner before any asynchronous setup; failures only release this reservation.
     await setTurn(next);
-    if (!(await ping(tab.id))) {
-      speakTts(isSupportedUrl(tab.url) ? msg.RELOAD_PAGE : msg.ONLY_INPOST);
-      await resetTurnIf(next.id);
-      return;
-    }
+    if (!(await preparePageAccess(tab))) { await resetTurnIf(next.id); return; }
     try { await ensureOffscreen(); await chrome.runtime.sendMessage({ target: 'offscreen', type: 'REC_START', turnId: next.id }); }
     catch { await announce(tab.id, msg.MIC_NO_DEVICE); await resetTurnIf(next.id); }
   } else {

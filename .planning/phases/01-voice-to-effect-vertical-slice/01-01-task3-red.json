@@ -1,0 +1,8 @@
+{
+  "command": "uv run --directory server pytest -q tests/test_security.py::test_foreign_origin_rejected_before_upstream --junitxml=/tmp/01-01-task3-red.xml",
+  "exitCode": 1,
+  "targetTest": "tests.test_security",
+  "expected": "403 forbidden_origin before parsing/upstream",
+  "actual": "422 no origin guard",
+  "output": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"0\" failures=\"1\" skipped=\"0\" tests=\"1\" time=\"0.142\" timestamp=\"2026-10-03T15:10:32.577791+02:00\" hostname=\"omarchy\"><testcase classname=\"tests.test_security\" name=\"test_foreign_origin_rejected_before_upstream\" time=\"0.041\"><failure message=\"assert 422 == 403&#10; +  where 422 = &lt;Response [422 Unprocessable Entity]&gt;.status_code\">def test_foreign_origin_rejected_before_upstream():\n        with make_client(lambda request: pytest.fail(\"unexpected upstream\")) as client:\n            result = client.post(\"/api/action\", content=\"bad\", headers={\"origin\": \"https://evil.example\", \"content-type\": \"text/plain\"})\n&gt;       assert result.status_code == 403\nE       assert 422 == 403\nE        +  where 422 = &lt;Response [422 Unprocessable Entity]&gt;.status_code\n\ntests/test_security.py:21: AssertionError</failure></testcase></testsuite></testsuites>"
+}

@@ -9,10 +9,11 @@ export async function run(ctx) {
   await ctx.speak(page, 'kliknij Znajdź');
   await ctx.waitForLive(page, 'Klikam Znajdź.');
   await waitFor(() => page.evaluate(`document.querySelector('.parcel-wrapper').textContent.includes('Status: W drodze do paczkomatu')`), { timeoutMs: 5000, label: 'real click result' });
+  await ctx.waitForLive(page, log => log.some(s => s.startsWith('Zmiana na stronie')));
   const log = await ctx.liveLog(page);
   assert(log.indexOf('Słucham.') < log.indexOf('Przetwarzam.') && log.indexOf('Przetwarzam.') < log.indexOf('Klikam Znajdź.'));
   const requests = await ctx.upstreamSince(mark);
-  assert.equal(requests.length, 1);
+  assert.equal(requests.length, 2);
   assert.equal(requests[0].response_format.json_schema.name, 'action_proposal');
   const content = requests[0].messages.findLast(m => m.role === 'user').content;
   assert.match(content, /button e\d+ "Znajdź"/);

@@ -1,10 +1,12 @@
-import { resolveTarget } from './snapshot.ts';
+import { resolveTarget, getLastSnapshot, takeSnapshot } from './snapshot.ts';
+import { diffSnapshots } from '../shared/diff.ts';
+import { startSettleWatch } from './settle.ts';
 import { validateProposal } from '../shared/validate.ts';
 import type { Proposal } from '../shared/validate.ts';
 import type { ExecuteResult } from '../shared/protocol.ts';
 import { spokenName } from '../shared/snapshot-format.ts';
 import { clickPre, fillPre } from '../shared/messages.pl.ts';
-export async function execute(epoch: number, proposal: Proposal, announcer: { announce(text: string): void }): Promise<ExecuteResult> {
+export async function execute(epoch: number, proposal: Proposal, announcer: { host: HTMLElement; announce(text: string): void }): Promise<ExecuteResult> {
   let resolved = ['click', 'fill'].includes(proposal.action) ? resolveTarget(proposal.target, epoch) : { target: null, element: null, node: null };
   const verdict = validateProposal(proposal, resolved.target);
   if (!verdict.ok) return verdict;
@@ -18,8 +20,11 @@ export async function execute(epoch: number, proposal: Proposal, announcer: { an
   resolved = resolveTarget(proposal.target, epoch);
   const liveVerdict = validateProposal(proposal, resolved.target);
   if (!liveVerdict.ok) return liveVerdict;
+  const pre = getLastSnapshot();
+  if (!pre || pre.epoch !== epoch) return { ok: false, reason: 'stale' };
   const element = resolved.element as HTMLElement;
   element.scrollIntoView({ block: 'center' });
+  const settled = startSettleWatch({ ignore: el => announcer.host.contains(el) });
   if (verdict.kind === 'click') element.click();
   else {
     element.focus();
@@ -30,5 +35,7 @@ export async function execute(epoch: number, proposal: Proposal, announcer: { an
     const key = Array.from(proposal.text).at(-1) ?? '';
     for (const type of ['keydown', 'keyup']) element.dispatchEvent(new KeyboardEvent(type, { key, bubbles: true }));
   }
-  return { ok: true, kind: verdict.kind, name, role: resolved.node!.role };
+  await settled;
+  const post = takeSnapshot(document, { excludeRoot: announcer.host });
+  return { ok: true, kind: verdict.kind, name, role: resolved.node!.role, diff: diffSnapshots(pre, post) };
 }

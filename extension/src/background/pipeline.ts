@@ -1,5 +1,7 @@
 import { SESSION_KEYS } from '../shared/protocol.ts';
-import type { FromOffscreen, SnapshotResult, ExecuteResult } from '../shared/protocol.ts';
+import type { FromOffscreen, SnapshotResult, ExecuteResult, ExecutedAction, EffectResponse } from '../shared/protocol.ts';
+import type { PageDiff } from '../shared/snapshot-format.ts';
+import { isEmptyDiff } from '../shared/diff.ts';
 import type { Proposal } from '../shared/validate.ts';
 import { onToggle, isStale } from '../shared/turn.ts';
 import type { TurnState } from '../shared/turn.ts';
@@ -37,6 +39,15 @@ export async function announce(tabId: number | undefined, text: string): Promise
     if (tabId === undefined) throw new Error('no_tab');
     await chrome.tabs.sendMessage(tabId, { type: 'ANNOUNCE', text }, { frameId: 0 });
   } catch { speakTts(text); }
+}
+export async function announceEffect(tabId: number, action: ExecutedAction, diff: PageDiff): Promise<void> {
+  if (isEmptyDiff(diff)) { await announce(tabId, msg.noChange(action.kind, action.name)); return; }
+  let text: string;
+  try {
+    const reply = await postJson<EffectResponse>('/api/effect', { action, diff }, 12000);
+    text = reply.say.trim() || msg.effectFallback(action.kind, action.name);
+  } catch { text = msg.effectFallback(action.kind, action.name); }
+  await announce(tabId, text);
 }
 export async function handleToggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promise<void> {
   if (tab.id === undefined) return;
@@ -94,4 +105,5 @@ export async function runCommand(tabId: number | undefined, rawText: string): Pr
   catch { return; }
   if (!executed.ok) await announce(tabId, msg.rejectionText(executed.reason));
   else if (executed.kind === 'none') await announce(tabId, msg.noneSay(proposal.say));
+  else await announceEffect(tabId!, { kind: executed.kind, name: executed.name, role: executed.role }, executed.diff ?? { added: [], removed: [], changed: [], alerts: [] });
 }

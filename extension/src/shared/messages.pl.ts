@@ -1,7 +1,12 @@
 import type { RejectReason } from './validate.ts';
 import { truncate } from './snapshot-format.ts';
-import type { ParcelStatus } from './protocol.ts';
-import { spellInteger } from './polish-speech.ts';
+import type { ParcelStatus, ExecutedAction } from './protocol.ts';
+import type { PageDiff } from './snapshot-format.ts';
+import { isEmptyDiff } from './diff.ts';
+import { STATUS_SPOKEN_MAX } from './limits.ts';
+import { spellInteger, speakable } from './polish-speech.ts';
+export const STATUS_TRUNCATED_NOTE = 'Dalszy opis jest na stronie.';
+export const STEP_LIMIT = 'To wszystko na jedno polecenie. Powiedz, co dalej.';
 export const PARCEL_ASK_NUMBER = 'Podaj numer przesyłki.';
 export const PARCEL_NO_DIGITS = 'Nie usłyszałem numeru przesyłki. Powiedz sam numer.';
 export const PARCEL_NOT_UNDERSTOOD = 'Nie zrozumiałem numeru. Powiedz go cyframi, na przykład osiem siedem trzy dwa.';
@@ -13,7 +18,19 @@ export const NOTHING_TO_CONFIRM = 'Nie ma nic do potwierdzenia.';
 export const STATUS_UNREAD = 'Nie udało się odczytać statusu przesyłki ze strony. Spróbuj jeszcze raz.';
 export const PARCEL_FORM_MISSING = 'Na tej stronie nie ma pola numeru przesyłki. Otwórz stronę śledzenia przesyłek InPost.';
 export function parcelReadback(groups: string): string { return `Numer przesyłki: ${groups}. Potwierdzasz? Powiedz tak albo nie.`; }
-export function statusSpeech(s: ParcelStatus): string { return s.kind === 'error' ? 'Strona informuje: ' + s.description : 'Status na stronie: ' + s.title + (/[.!?…]$/u.test(s.title) ? '' : '.') + (s.description ? ' ' + s.description : ''); }
+export function statusSpeech(s: ParcelStatus): string {
+  const prefix = s.kind === 'error' ? 'Strona informuje: ' : 'Status na stronie: ';
+  const body = s.kind === 'error' ? s.description : s.title + (/[.!?…]$/u.test(s.title) ? '' : '.') + (s.description ? ' ' + s.description : '');
+  if (Array.from(prefix + body).length <= STATUS_SPOKEN_MAX) return prefix + body;
+  const head = s.kind === 'error' ? prefix : prefix + s.title + (/[.!?…]$/u.test(s.title) ? '' : '.') + (s.description ? ' ' : '');
+  const useDescription = Array.from(head).length < STATUS_SPOKEN_MAX;
+  const spokenPrefix = useDescription ? head : prefix;
+  const cut = Array.from(useDescription ? s.description : body).slice(0, STATUS_SPOKEN_MAX - Array.from(spokenPrefix).length).join('');
+  let boundary = -1;
+  for (const m of cut.matchAll(/[.!?](?=\s)/gu)) boundary = m.index + 1;
+  const lastSpace = cut.lastIndexOf(' ');
+  return spokenPrefix + cut.slice(0, boundary > 0 ? boundary : lastSpace > 0 ? lastSpace : cut.length).trimEnd() + ' ' + STATUS_TRUNCATED_NOTE;
+}
 export const LISTENING = 'Słucham.';
 export const PROCESSING = 'Przetwarzam.';
 export const BUSY = 'Jeszcze pracuję.';
@@ -53,4 +70,13 @@ const REJECTIONS: Record<RejectReason, string> = {
   unconfirmed: ACTION_FAILED,
 };
 export function rejectionText(reason: RejectReason): string { return REJECTIONS[reason]; }
-export function noneSay(say: string): string { return truncate(say, 300) || NONE_FALLBACK; }
+export function noneSay(say: string): string { return truncate(speakable(say), 300) || NONE_FALLBACK; }
+export function localEffect(action: ExecutedAction, diff: PageDiff): string {
+  if (isEmptyDiff(diff)) return noChange(action.kind, action.name);
+  const prefix = action.kind === 'click' ? `Kliknąłem ${action.name}.` : `Wpisałem tekst w pole ${action.name}.`;
+  if (diff.path || diff.title) return prefix + ' Jesteś teraz na stronie ' + (diff.title?.after || diff.path?.after) + '.';
+  if (diff.alerts.length) return prefix + ' Strona informuje: ' + diff.alerts[0];
+  const text = diff.added.find(s => !/^(?:button|link|textbox|searchbox|combobox|checkbox|radio|menuitem|tab|switch)(?:\s|$)/u.test(s));
+  if (text) return prefix + ' Na stronie pojawiło się: ' + text + (/[.!?…]$/u.test(text) ? '' : '.');
+  return prefix + ' Strona się zmieniła.';
+}

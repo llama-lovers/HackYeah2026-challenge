@@ -51,3 +51,33 @@ export function spellInteger(n: number): string {
   if (n) parts.push(belowThousand(n));
   return parts.join(' ');
 }
+export function formatPln(zl: number, gr = 0): string {
+  if (!Number.isInteger(gr) || gr < 0 || gr > 99) throw new RangeError('invalid_grosz');
+  const parts: string[] = [];
+  if (zl || !gr) parts.push(spellInteger(zl) + ' ' + pluralForm(zl, 'złoty', 'złote', 'złotych'));
+  if (gr) parts.push(spellInteger(gr) + ' ' + pluralForm(gr, 'grosz', 'grosze', 'groszy'));
+  return parts.join(' ');
+}
+const ORDINALS = ['', 'pierwszego', 'drugiego', 'trzeciego', 'czwartego', 'piątego', 'szóstego', 'siódmego', 'ósmego', 'dziewiątego', 'dziesiątego', 'jedenastego', 'dwunastego', 'trzynastego', 'czternastego', 'piętnastego', 'szesnastego', 'siedemnastego', 'osiemnastego', 'dziewiętnastego'];
+const ORDINAL_TENS = ['', '', 'dwudziestego', 'trzydziestego', 'czterdziestego', 'pięćdziesiątego', 'sześćdziesiątego', 'siedemdziesiątego', 'osiemdziesiątego', 'dziewięćdziesiątego'];
+const MONTHS = ['stycznia', 'lutego', 'marca', 'kwietnia', 'maja', 'czerwca', 'lipca', 'sierpnia', 'września', 'października', 'listopada', 'grudnia'];
+function ordinal(n: number): string { return n < 20 ? ORDINALS[n]! : ORDINAL_TENS[Math.floor(n / 10)]! + (n % 10 ? ' ' + ORDINALS[n % 10] : ''); }
+function validDate(d: number, m: number, y: number): boolean {
+  return Number.isInteger(d) && Number.isInteger(m) && Number.isInteger(y) && y >= 2000 && y <= 2099 && m >= 1 && m <= 12 && d >= 1 && d <= new Date(Date.UTC(y, m, 0)).getUTCDate();
+}
+export function formatDate(d: number, m: number, y: number): string {
+  if (!validDate(d, m, y)) return '';
+  return ordinal(d) + ' ' + MONTHS[m - 1] + ' ' + (y === 2000 ? 'dwutysięcznego' : 'dwa tysiące ' + ordinal(y % 100)) + ' roku';
+}
+export function speakable(text: string): string {
+  const date = (original: string, d: string, m: string, y: string) => formatDate(Number(d), Number(m), Number(y)) || original;
+  let result = text.replace(/(?<!\d)(\d{1,2})\.(\d{1,2})\.(\d{4})(?!\d)/gu, (all, d, m, y) => date(all, d, m, y));
+  result = result.replace(/(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)/gu, (all, y, m, d) => date(all, d, m, y));
+  const monthPattern = MONTHS.join('|');
+  result = result.replace(new RegExp('(?<!\\d)(\\d{1,2})\\s+(' + monthPattern + ')\\s+(\\d{4})(?!\\d)(?:\\s+r\\.)?', 'giu'), (all, d, month, y) => formatDate(Number(d), MONTHS.indexOf(month.toLowerCase()) + 1, Number(y)) || all);
+  result = result.replace(/(?<![\p{L}\p{N},])((?:\d{1,3}(?:[ \u00a0]\d{3})+|\d+))(?:,(\d{2}))?\s*(?:PLN|złotych|zł)(?!\p{L})/giu, (all, zl, gr) => {
+    const integer = Number(zl.replace(/[ \u00a0]/g, ''));
+    return integer <= 999999999 ? formatPln(integer, Number(gr ?? 0)) : all;
+  });
+  return result.replace(/(?<![\p{L}\p{N}])(\d{24}|\d{8})(?![\p{L}\p{N}])/gu, (_all, digits: string) => digitsToSpokenGroups(digits));
+}

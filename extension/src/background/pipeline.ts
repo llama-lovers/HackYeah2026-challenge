@@ -2,7 +2,9 @@ import { SESSION_KEYS, PENDING_EFFECT_MAX_AGE_MS } from '../shared/protocol.ts';
 import type { FromOffscreen, SnapshotResult, ExecuteResult, ExecutedAction, EffectResponse, PendingEffectJob, SettleDiffResult, ReadStatusResult } from '../shared/protocol.ts';
 import type { PageDiff, Snapshot } from '../shared/snapshot-format.ts';
 import { parseIntent } from '../shared/intent.ts';
-import { wordsToDigits, digitsToSpokenGroups } from '../shared/polish-speech.ts';
+import { wordsToDigits, digitsToSpokenGroups, speakable } from '../shared/polish-speech.ts';
+import { createBudget, takeStep } from '../shared/limits.ts';
+import type { StepBudget } from '../shared/limits.ts';
 import { isParcelDigits, pickParcelField, pickSearchButton } from '../shared/parcel.ts';
 import { routeReply } from '../shared/pending.ts';
 import type { PendingInteraction } from '../shared/pending.ts';
@@ -50,7 +52,7 @@ export async function announceEffect(tabId: number, action: ExecutedAction, diff
   let text: string;
   try {
     const reply = await postJson<EffectResponse>('/api/effect', { action, diff }, 12000, signal);
-    text = reply.say.trim() || msg.effectFallback(action.kind, action.name);
+    text = speakable(reply.say).trim() || msg.effectFallback(action.kind, action.name);
   } catch { text = msg.effectFallback(action.kind, action.name); }
   if (signal?.aborted) return;
   await announce(tabId, text);
@@ -130,8 +132,8 @@ async function ownsTurn(turnId: string): Promise<boolean> { return !turnSignal(t
 export async function getPending(): Promise<PendingInteraction | undefined> { return (await chrome.storage.session.get(SESSION_KEYS.pending))[SESSION_KEYS.pending] as PendingInteraction | undefined; }
 export function setPending(turnId: string, pending: PendingInteraction): Promise<void> { return runSerial(async () => { if (await ownsTurn(turnId)) await chrome.storage.session.set({ [SESSION_KEYS.pending]: pending }); }); }
 export function claimPending(): Promise<PendingInteraction | undefined> { return runSerial(async () => { const p = await getPending(); await chrome.storage.session.remove(SESSION_KEYS.pending); return p; }); }
-type CommandRun = { turnId: string; tabId: number; signal: AbortSignal };
-type ProposalStep = { proposal: Proposal; epoch: number; docId: string; preSnapshot: Snapshot; announce: 'model' | 'none' };
+export type CommandRun = { turnId: string; tabId: number; signal: AbortSignal; budget: StepBudget };
+type ProposalStep = { proposal: Proposal; epoch: number; docId: string; preSnapshot: Snapshot; announce: 'model' | 'none' | 'local' };
 export async function performProposal(run: CommandRun, step: ProposalStep): Promise<'done' | 'handoff' | 'stopped'> {
   const { turnId, tabId, signal } = run, { proposal } = step;
   const say = async (text: string) => { if (await ownsTurn(turnId)) await announce(tabId, text); };
@@ -139,11 +141,13 @@ export async function performProposal(run: CommandRun, step: ProposalStep): Prom
   let jobId = '';
   if (proposal.action === 'click' || proposal.action === 'fill') {
     const node = step.preSnapshot.nodes.find(n => n.id === proposal.target);
-    const job: PendingEffectJob = { id: crypto.randomUUID(), turnId, tabId, state: 'proposed', action: { kind: proposal.action, name: node ? spokenName(node) : '', role: node?.role ?? '' }, preSnapshot: step.preSnapshot, startedAt: Date.now() };
+    const job: PendingEffectJob = { id: crypto.randomUUID(), turnId, tabId, state: 'proposed', action: { kind: proposal.action, name: node ? spokenName(node) : '', role: node?.role ?? '' }, preSnapshot: step.preSnapshot, startedAt: Date.now(), effect: step.announce === 'model' ? 'model' : 'local' };
     jobId = job.id;
     await runSerial(async () => { if (await ownsTurn(turnId)) await chrome.storage.session.set({ [JOB]: job }); });
   }
   if (!(await ownsTurn(turnId))) return 'stopped';
+  // Charge only click/fill messages actually sent; reads and announcements are free.
+  if (['click', 'fill'].includes(proposal.action) && !takeStep(run.budget)) { if (jobId) await runSerial(() => dropJob(jobId)); await say(msg.STEP_LIMIT); return 'stopped'; }
   let executed: ExecuteResult;
   try { executed = await chrome.tabs.sendMessage(tabId, { type: 'EXECUTE', epoch: step.epoch, proposal, turnId, jobId, docId: step.docId }, { frameId: 0 }); }
   catch {
@@ -157,6 +161,7 @@ export async function performProposal(run: CommandRun, step: ProposalStep): Prom
   if (!executed.ok) { await say(msg.rejectionText(executed.reason)); return 'stopped'; }
   if (executed.kind === 'none') { await say(msg.noneSay(proposal.say)); return 'stopped'; }
   if (step.announce === 'model') await announceEffect(tabId, { kind: executed.kind, name: executed.name, role: executed.role }, executed.diff ?? { added: [], removed: [], changed: [], alerts: [] }, signal);
+  else if (step.announce === 'local') await say(msg.localEffect({ kind: executed.kind, name: executed.name, role: executed.role }, executed.diff ?? { added: [], removed: [], changed: [], alerts: [] }));
   return 'done';
 }
 export async function runParcelSearch(run: CommandRun, digits: string): Promise<'handoff' | void> {
@@ -190,6 +195,7 @@ async function parcelReadback(run: CommandRun, digits: string): Promise<void> {
 }
 export async function runCommand(turnId: string, tabId: number | undefined, rawText: string): Promise<'handoff' | void> {
   const signal = turnSignal(turnId);
+  const run: CommandRun = { turnId, tabId: tabId!, signal, budget: createBudget() };
   const say = async (text: string) => { if (await ownsTurn(turnId)) await announce(tabId, text); };
   const text = rawText.trim();
   if (!text) { await say(msg.NOTHING_HEARD); return; }
@@ -197,17 +203,17 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
   const intent = parseIntent(text);
   if (pending && pending.tabId === tabId) {
     const reply = routeReply(pending, text, Date.now());
-    if (reply.kind === 'confirm' && pending.kind === 'confirm_parcel') return runParcelSearch({ turnId, tabId: tabId!, signal }, pending.digits);
+    if (reply.kind === 'confirm' && pending.kind === 'confirm_parcel') return runParcelSearch(run, pending.digits);
     if (reply.kind === 'cancel') { await say(msg.CANCELLED); return; }
     if (reply.kind === 'reprompt') { await setPending(turnId, { ...pending, reprompts: pending.reprompts + 1 }); await say(msg.CONFIRM_REPROMPT); return; }
-    if (reply.kind === 'number') return parcelReadback({ turnId, tabId: tabId!, signal }, reply.digits);
+    if (reply.kind === 'number') return parcelReadback(run, reply.digits);
     if (reply.kind === 'bad_number') { await setPending(turnId, { ...pending, reprompts: pending.reprompts + 1 }); await say(reply.count === null ? msg.PARCEL_NOT_UNDERSTOOD : msg.parcelWrongLength(reply.count)); return; }
     if (reply.kind === 'expired' && (intent.kind === 'yes' || intent.kind === 'no')) { await say(msg.CONFIRM_EXPIRED); return; }
   }
   if (intent.kind === 'track_parcel') {
     if (tabId === undefined) { await say(msg.SNAPSHOT_FAILED); return; }
     const number = wordsToDigits(intent.rest);
-    if (number.ok && isParcelDigits(number.digits)) return parcelReadback({ turnId, tabId, signal }, number.digits);
+    if (number.ok && isParcelDigits(number.digits)) return parcelReadback(run, number.digits);
     await setPending(turnId, { kind: 'await_parcel_number', id: crypto.randomUUID(), tabId, createdAt: Date.now(), reprompts: 0 });
     await say(!intent.rest ? msg.PARCEL_ASK_NUMBER : !number.ok ? msg.PARCEL_NOT_UNDERSTOOD : msg.parcelWrongLength(number.digits.length));
     return;
@@ -226,7 +232,7 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
     proposal = await postJson('/api/action', { utterance, snapshot: toModelText(result.snapshot) }, 20000, signal);
   } catch (error) { await say(error instanceof EgressBlockedError ? msg.SNAPSHOT_FAILED : msg.ASSISTANT_FAILED); return; }
   if (!(await ownsTurn(turnId))) return;
-  const outcome = await performProposal({ turnId, tabId: tabId!, signal }, { proposal, epoch: result.snapshot.epoch, docId: result.docId, preSnapshot: result.snapshot, announce: 'model' });
+  const outcome = await performProposal(run, { proposal, epoch: result.snapshot.epoch, docId: result.docId, preSnapshot: result.snapshot, announce: 'model' });
   return outcome === 'handoff' ? 'handoff' : undefined;
 }
 // The content script calls this right before it performs a click/fill; only after the acknowledgement does it act.
@@ -277,7 +283,8 @@ export async function handleReady(tabId: number): Promise<void> {
     const result: SettleDiffResult = await chrome.tabs.sendMessage(tabId, { type: 'SETTLE_DIFF', preSnapshot: job.preSnapshot }, { frameId: 0 });
     if (!result.ok) throw new Error('snapshot_failed');
     if (!(await ownsTurn(job.turnId))) return;
-    await announceEffect(tabId, job.action, result.diff, turnSignal(job.turnId));
+    if (job.effect === 'local') await announce(tabId, msg.localEffect(job.action, result.diff));
+    else await announceEffect(tabId, job.action, result.diff, turnSignal(job.turnId));
   } catch { if (await ownsTurn(job.turnId)) await announce(tabId, msg.effectFallback(job.action.kind, job.action.name)); }
   finally { await runSerial(async () => { await resetTurnIf(job.turnId); await dropJob(job.id); }); }
 }

@@ -92,7 +92,7 @@ test('stale recovery aborts the in-flight model request of the abandoned turn (C
 });
 
 // Drives one full turn up to the model proposal; returns the turn id.
-const button = { id: 'e1', kind: 'interactive', role: 'button', name: 'Znajdź', state: {} };
+const button = { id: 'e1', kind: 'interactive' as const, role: 'button', name: 'Znajdź', state: {} };
 const withProposal = (proposal: object, effect = 'Kliknąłem Znajdź. Status: w drodze.') => {
   g.fetch = async (url: string) => ({ ok: true, json: async () => String(url).endsWith('/api/effect') ? { say: effect } : proposal });
 };
@@ -281,4 +281,31 @@ test('model effect speaks amount and date while local navigation makes no fetch'
   tabHandler = (_tab, m) => m.type === 'SETTLE_DIFF' ? { ok: true, diff: { ...emptyDiff, title: { before: 'T', after: 'Wyniki' } } } : { ok: true };
   await pipeline.handleReady(7);
   assert.deepEqual(network, []); assert.deepEqual(announced(), ['Kliknąłem Znajdź. Jesteś teraz na stronie Wyniki.']);
+});
+test('tracking waits for fill completion and delivery failure stops before click', async () => {
+  localAdapter();
+  let finish!: (value: object) => void;
+  tabHandler = (_tab, m) => m.type === 'SNAPSHOT' ? { ok: true, docId: 'doc-1', snapshot: { ...snapshot, nodes: [field, button] } } : m.type === 'EXECUTE' ? new Promise(resolve => { finish = resolve; }) : { ok: true };
+  const run = makeRun(), work = pipeline.runParcelSearch(run, '12345678');
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.deepEqual(tabCalls.filter(c => c.message.type === 'EXECUTE').map(c => c.message.proposal.action), ['fill']);
+  finish({ ok: false, reason: 'disabled' }); await work;
+  assert.equal(run.budget.used, 1); assert.equal(tabCalls.filter(c => c.message.type === 'EXECUTE').length, 1);
+  assert.deepEqual(announced(), ['Ten element jest teraz nieaktywny, więc go nie użyję.']);
+  tabCalls.length = 0;
+  tabHandler = (_tab, m) => m.type === 'SNAPSHOT' ? { ok: true, docId: 'doc-1', snapshot: { ...snapshot, nodes: [field, button] } } : m.type === 'EXECUTE' ? (() => { throw new Error('delivery_failed'); })() : { ok: true };
+  const failed = makeRun(); await pipeline.runParcelSearch(failed, '12345678');
+  assert.equal(failed.budget.used, 1); assert.equal(tabCalls.filter(c => c.message.type === 'EXECUTE').length, 1);
+  assert.deepEqual(announced(), ['Nie udało się wykonać tej akcji. Spróbuj jeszcze raz.']);
+});
+test('none actions and zero-step dialog replies are spoken without charging a step', async () => {
+  localAdapter();
+  tabHandler = (_tab, m) => m.type === 'EXECUTE' ? { ok: true, kind: 'none' } : { ok: true };
+  const run = makeRun({ max: 0, used: 0 });
+  await pipeline.performProposal(run, { ...step, proposal: { ...clickProposal, action: 'none', say: 'Nie rozumiem.' } });
+  assert.equal(run.budget.used, 0); assert.deepEqual(announced(), ['Nie rozumiem.']);
+  for (const [text, p, expected] of [['tak', undefined, 'Nie ma nic do potwierdzenia.'], ['nie', parcelPending(), 'Anulowałem.'], ['co innego', parcelPending(), 'Powiedz tak albo nie.']] as const) {
+    tabCalls.length = 0; store.delete('pending'); if (p) store.set('pending', p);
+    await localCommand(text); assert.deepEqual(announced(), [expected]); assert(!tabCalls.some(c => c.message.type === 'EXECUTE'));
+  }
 });

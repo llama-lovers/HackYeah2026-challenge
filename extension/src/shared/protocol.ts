@@ -33,4 +33,4 @@ export interface EffectRequestBody { action: ExecutedAction; diff: PageDiff }
 export interface EffectResponse { say: string }
 export interface TranscribeResponse { text: string }
 export interface ProxyErrorBody { error: string }
-export interface PendingEffectJob { id: string; turnId: string; tabId: number; state: 'proposed' | 'executed' | 'claimed'; action: ExecutedAction; preSnapshot: Snapshot; startedAt: number }
+export interface PendingEffectJob { id: string; turnId: string; tabId: number; state: 'proposed' | 'executed' | 'claimed'; action: ExecutedAction; preSnapshot: Snapshot; startedAt: number; effect?: 'model' | 'local' }

@@ -40,6 +40,9 @@ test('long status quote is a bounded verbatim prefix with an announced cut', () 
     assert(s.endsWith(note)); assert(Array.from(s.slice(0, -note.length)).length <= 400);
     assert(('Strona informuje: ' + d).startsWith(s.slice(0, -note.length)));
   }
+  const noSentence = m.statusSpeech({ kind: 'status', title: 'W drodze', description: 'opis '.repeat(200) });
+  assert(noSentence.startsWith('Status na stronie: W drodze. opis opis'));
+  assert(Array.from(noSentence.slice(0, -note.length)).length <= 400);
 });
 test('local effect describes observed transitions alerts text and controls', () => {
   const f = (m as any).localEffect;

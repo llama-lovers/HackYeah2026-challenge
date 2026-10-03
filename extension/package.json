@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test \"src/**/*.test.ts\""
+    "test": "node --test \"src/**/*.test.ts\"",
+    "dom-check": "node e2e/dom-check.mjs"
   },
   "devDependencies": {
     "@types/chrome": "0.3.4",

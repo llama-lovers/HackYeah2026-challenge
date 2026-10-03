@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="pl">
+<head><meta charset="utf-8"><title>Śledzenie przesyłek (fixture)</title>
+<style>body{font:18px sans-serif;margin:24px}main{max-width:800px}input,button{font:inherit;margin:8px;padding:8px}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}.mobile-nav{display:none}help-widget{display:block}svg{width:20px;height:20px}</style></head>
+<body>
+<header><a href="/fixtures/szukaj.html" class="btnSearchDesktop" aria-label="Szukaj">Szukaj</a>
+<nav class="mobile-nav"><input class="mobileSearchInput" aria-label="Szukaj w InPost"><button class="btnSearchMobile" aria-label="Szukaj" disabled>Szukaj</button></nav></header>
+<main><h1>Śledź paczkę</h1>
+<form class="tracking-form" novalidate>
+<label class="sr-only" for="ShipmentNumber">Enter parcel numbers separated by commas</label>
+<input id="ShipmentNumber" name="number" type="text" minlength="8" maxlength="24" pattern="\d{8}|\d{24}" autocomplete="off" placeholder="Wpisz numer przesyłki">
+<p>np. 873234987612340872938732 (24 znaki)</p>
+<div id="typingErrorMsgContainer" aria-live="polite"></div>
+<button type="submit">Znajdź</button>
+</form>
+<button type="button">Pokaż mapę</button><button type="button" disabled>Dalej</button>
+<help-widget></help-widget><svg><circle r="5" cx="10" cy="10"></circle></svg>
+<div class="track-parcel"></div></main>
+<script>
+customElements.define('help-widget', class extends HTMLElement { constructor() { super(); this.attachShadow({mode:'open'}).innerHTML='<button type="button">Pomoc</button>'; } });
+const input = document.querySelector('#ShipmentNumber');
+const error = document.querySelector('#typingErrorMsgContainer');
+input.addEventListener('input', () => { error.textContent = ''; });
+document.querySelector('.mobileSearchInput').addEventListener('keyup', e => { document.querySelector('.btnSearchMobile').disabled = e.target.value.length < 3; });
+document.querySelector('.tracking-form').addEventListener('submit', e => {
+  e.preventDefault(); const n = input.value;
+  if (!/^(\d{8}|\d{24})$/.test(n)) { error.textContent='Wpisz poprawny numer przesyłki (8 lub 24 cyfry).'; return; }
+  history.pushState(null, '', '?number=' + n);
+  const result = document.querySelector('.track-parcel');
+  result.innerHTML='<div class="loader" role="progressbar" aria-busy="true">Ładowanie…</div>';
+  setTimeout(() => {
+    result.replaceChildren();
+    const wrapper = document.createElement('div'); wrapper.className='parcel-wrapper';
+    const number = document.createElement('p'); number.textContent='Przesyłka nr: ' + n;
+    const status = document.createElement('p'); status.textContent=n.startsWith('0000') ? 'There was an unknown problem during tracking process. Please verify provided number and try again.' : 'Status: W drodze do paczkomatu';
+    wrapper.append(number, status); result.append(wrapper);
+    const svg = document.querySelector('svg'), circle = svg.querySelector('circle');
+    let flip=false;
+    const timer = setInterval(() => { flip=!flip; circle.setAttribute('r', flip ? '6' : '5'); if (flip) { const title=document.createElementNS('http://www.w3.org/2000/svg','title'); title.textContent='animacja'; svg.append(title); } else svg.querySelector('title')?.remove(); }, 50);
+    setTimeout(() => clearInterval(timer), 3000);
+  }, 700);
+});
+</script></body></html>

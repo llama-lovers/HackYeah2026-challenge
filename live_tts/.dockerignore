@@ -1,0 +1,11 @@
+.venv
+.cache
+__pycache__
+.pytest_cache
+artifacts
+models
+config.env
+tests
+*.wav
+*.pcm
+:memory:.ses

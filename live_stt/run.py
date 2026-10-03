@@ -59,7 +59,7 @@ def main():
         print(f"ASR_BACKEND={values.get('ASR_BACKEND', 'openrouter')}", flush=True)
         return subprocess.call(cmd, cwd=ROOT, env=env)
     except FileNotFoundError:
-        print("Brak config.env lub polecenia docker. Sprawdź instalację Docker.", file=sys.stderr)
+        print("Brak config.env lub polecenia docker. Skopiuj env.example do config.env, uzupełnij ustawienia i sprawdź instalację Docker.", file=sys.stderr)
         return 1
     except (ValueError, OSError) as exc:
         print(f"Błąd: {exc}", file=sys.stderr)

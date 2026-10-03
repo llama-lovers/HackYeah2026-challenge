@@ -21,24 +21,24 @@ Phase 1 checkboxes track delivered implementation after all declaring plans fini
 
 - [x] **OUT-01**: User hears every agent message through their own screen reader via a pre-rendered ARIA live region
 - [ ] **OUT-02**: User can switch the output mode to built-in voice (`chrome.tts`, pl-PL) when no screen reader is running; the two voices never speak at the same time
-- [ ] **OUT-03**: User can say "powtórz" to hear the last message again
-- [ ] **OUT-04**: User can say "krócej" or "dokładniej" to change verbosity (3 levels, remembered across sessions)
+- [x] **OUT-03**: User can say "powtórz" to hear the last message again
+- [x] **OUT-04**: User can say "krócej" or "dokładniej" to change verbosity (3 levels, remembered across sessions)
 - [ ] **OUT-05**: Numbers, dates and PLN amounts are spoken in readable Polish (e.g. "trzysta czterdzieści dziewięć złotych", digit groups)
 - [ ] **OUT-06**: User hears short, distinct earcons for "working", "done" and "needs confirmation", and can turn them off
-- [ ] **OUT-07**: If a command takes longer than ~8 s, user hears "To trwa dłużej niż zwykle"
-- [ ] **OUT-08**: Every error is spoken plainly with a suggested next step (STT failure, network failure, model failure, element not found). Never silence
+- [x] **OUT-07**: If a command takes longer than ~8 s, user hears "To trwa dłużej niż zwykle"
+- [x] **OUT-08**: Every error is spoken plainly with a suggested next step (STT failure, network failure, model failure, element not found). Never silence
 
 ### Page Understanding
 
 - [x] **PAGE-01**: Extension builds a simplified accessibility snapshot of the page (roles, names, states, short element ids) instead of sending raw HTML or screenshots
-- [ ] **PAGE-02**: User can ask "co tu jest?" and hears a 1–2 sentence page summary
-- [ ] **PAGE-03**: User can ask "co mogę zrobić?" and hears at most 3–5 available actions
+- [x] **PAGE-02**: User can ask "co tu jest?" and hears a 1–2 sentence page summary
+- [x] **PAGE-03**: User can ask "co mogę zrobić?" and hears at most 3–5 available actions
 
 ### Actions
 
 - [x] **ACT-01**: User can click an element by describing it in Polish ("kliknij Szukaj")
 - [x] **ACT-02**: User can fill a text field by dictation; the extension fires real input/change events so the page reacts (e.g. InPost enables the search button)
-- [ ] **ACT-03**: User can scroll up, down and to the top
+- [x] **ACT-03**: User can scroll up, down and to the top
 - [x] **ACT-04**: The model returns a structured action proposal (action, element id, text to say, needs-confirmation); the extension validates that the element exists, is visible and enabled, and that its role matches before executing
 - [ ] **ACT-05**: Each spoken command runs at most a small bounded number of steps, then reports and waits
 - [ ] **ACT-06**: When several elements match or the label is unclear, the agent asks with numbered options (max 3) instead of guessing
@@ -112,18 +112,18 @@ Which phases cover which requirements. Updated during roadmap creation.
 | VOICE-05 | Phase 4 | Pending |
 | OUT-01 | Phase 1 | Complete |
 | OUT-02 | Phase 4 | Pending |
-| OUT-03 | Phase 3 | Pending |
-| OUT-04 | Phase 3 | Pending |
+| OUT-03 | Phase 3 | Complete |
+| OUT-04 | Phase 3 | Complete |
 | OUT-05 | Phase 2 | Pending |
 | OUT-06 | Phase 4 | Pending |
-| OUT-07 | Phase 3 | Pending |
-| OUT-08 | Phase 3 | Pending |
+| OUT-07 | Phase 3 | Complete |
+| OUT-08 | Phase 3 | Complete |
 | PAGE-01 | Phase 1 | Complete |
-| PAGE-02 | Phase 3 | Pending |
-| PAGE-03 | Phase 3 | Pending |
+| PAGE-02 | Phase 3 | Complete |
+| PAGE-03 | Phase 3 | Complete |
 | ACT-01 | Phase 1 | Complete |
 | ACT-02 | Phase 1 | Complete |
-| ACT-03 | Phase 3 | Pending |
+| ACT-03 | Phase 3 | Complete |
 | ACT-04 | Phase 1 | Complete |
 | ACT-05 | Phase 2 | Pending |
 | ACT-06 | Phase 2 | Pending |

@@ -1,5 +1,5 @@
 import { SESSION_KEYS, PENDING_EFFECT_MAX_AGE_MS } from '../shared/protocol.ts';
-import type { FromOffscreen, SnapshotResult, ExecuteResult, ExecutedAction, EffectResponse, PendingEffectJob, SettleDiffResult, ReadStatusResult } from '../shared/protocol.ts';
+import type { FromOffscreen, SnapshotResult, CandidatesResult, ExecuteResult, ExecutedAction, EffectResponse, PendingEffectJob, SettleDiffResult, ReadStatusResult } from '../shared/protocol.ts';
 import type { PageDiff, Snapshot } from '../shared/snapshot-format.ts';
 import { parseIntent, isCaptchaLabel } from '../shared/intent.ts';
 import { wordsToDigits, digitsToSpokenGroups, speakable } from '../shared/polish-speech.ts';
@@ -14,7 +14,7 @@ import type { Proposal, ConfirmCategory } from '../shared/validate.ts';
 import { onToggle, isStale } from '../shared/turn.ts';
 import type { TurnState } from '../shared/turn.ts';
 import { maskText } from '../shared/mask.ts';
-import { parseExploreCommand, decodeSummary } from '../shared/exploration.ts';
+import { parseExploreCommand, decodeSummary, decodeActions, decodeRecheck, ACTION_CAPS } from '../shared/exploration.ts';
 import { toModelText, spokenName } from '../shared/snapshot-format.ts';
 import * as msg from '../shared/messages.pl.ts';
 import { postJson, EgressBlockedError } from './proxy.ts';
@@ -236,6 +236,34 @@ async function runSummary(run: CommandRun): Promise<void> {
   const sentences = decodeSummary(reply);
   await say(sentences ? sentences.join(' ') : msg.EXPLORE_FAILED);
 }
+// "co mogę zrobić?": candidates come from the live local policy, the model only ranks them, and the answer is re-judged and rendered locally.
+// The suggested ids live in this function only: they are never sent to EXECUTE, stored as a pending interaction or reused by a later command.
+async function runActions(run: CommandRun): Promise<void> {
+  const { turnId, tabId, signal } = run;
+  const say = async (text: string) => { if (await ownsTurn(turnId)) await announce(tabId, text); };
+  let result: CandidatesResult;
+  try {
+    result = await chrome.tabs.sendMessage(tabId, { type: 'CANDIDATES' }, { frameId: 0 });
+    if (!result.ok) throw new Error('snapshot_failed');
+  } catch { await say(msg.SNAPSHOT_FAILED); return; }
+  if (!(await ownsTurn(turnId))) return;
+  const { snapshot, docId, candidates, incomplete } = result;
+  // Sparse pages report the real count: with nothing eligible the model is not asked and nothing is invented.
+  if (!candidates.length) { await say(incomplete ? msg.NO_ACTIONS_PARTIAL : msg.NO_ACTIONS); return; }
+  let reply: unknown;
+  try { reply = await postJson<unknown>('/api/explore', { mode: 'actions', verbosity: 'standard', snapshot: toModelText(snapshot), candidates }, 20000, signal); }
+  catch (error) { await say(error instanceof EgressBlockedError ? msg.SNAPSHOT_FAILED : msg.ACTIONS_FAILED); return; }
+  if (!(await ownsTurn(turnId))) return;
+  const ids = decodeActions(reply, candidates.map(c => c.id), ACTION_CAPS.standard);
+  if (!ids) { await say(msg.ACTIONS_FAILED); return; }
+  let rechecked: ReturnType<typeof decodeRecheck>;
+  try { rechecked = decodeRecheck(await chrome.tabs.sendMessage(tabId, { type: 'RECHECK_CANDIDATES', docId, epoch: snapshot.epoch, ids }, { frameId: 0 }), ids); }
+  catch { await say(msg.ACTIONS_CHANGED); return; }
+  if (!(await ownsTurn(turnId))) return;
+  if (rechecked === null) { await say(msg.ACTIONS_FAILED); return; }
+  if (rechecked === 'stale' || !rechecked.length) { await say(msg.ACTIONS_CHANGED); return; }
+  await say(msg.actionsList(rechecked, incomplete));
+}
 export async function runCommand(turnId: string, tabId: number | undefined, rawText: string): Promise<'handoff' | void> {
   const signal = turnSignal(turnId);
   const run: CommandRun = { turnId, tabId: tabId!, signal, budget: createBudget() };
@@ -268,7 +296,8 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
     }
   }
   // Complete exploration phrases are routed locally, before any action proposal can be requested.
-  if (parseExploreCommand(text) === 'summary') { if (tabId === undefined) { await say(msg.SNAPSHOT_FAILED); return; } return runSummary(run); }
+  const explore = parseExploreCommand(text);
+  if (explore) { if (tabId === undefined) { await say(msg.SNAPSHOT_FAILED); return; } return explore === 'summary' ? runSummary(run) : runActions(run); }
   if (intent.kind === 'track_parcel') {
     if (tabId === undefined) { await say(msg.SNAPSHOT_FAILED); return; }
     const number = wordsToDigits(intent.rest);

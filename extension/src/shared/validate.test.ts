@@ -68,3 +68,21 @@ test('model can add confirmation but cannot remove payment or consent classifica
   assert.deepEqual(validateProposal({ ...proposal, needs_confirmation: true }, { ...target, name: 'Pokaż mapę' }), { ok: false, reason: 'needs_confirmation' });
   for (const t of [{ ...target, name: 'Zapłać' }, { ...target, consent: true }]) assert.deepEqual(validateProposal({ ...proposal, needs_confirmation: false }, t), { ok: false, reason: 'irreversible' });
 });
+// Exploration candidates share the live target policy; they never authorize execution.
+const kind = (t: Partial<ResolvedTarget> | null) => (validation as any).candidateKind(t === null ? null : { ...target, ...t });
+test('candidate kind admits only locally executable, safe, current controls', () => {
+  assert.equal(kind({}), 'click'); assert.equal(kind({ role: 'link' }), 'click'); assert.equal(kind({ role: 'textbox' }), 'fill'); assert.equal(kind({ role: 'combobox' }), 'fill');
+  for (const t of [null, { exists: false }, { epochMatches: false }, { connected: false }, { visible: false }, { disabled: true }, { drifted: true }, { role: 'heading' }, { role: 'switch' }, { role: 'textbox', sensitive: true }])
+    assert.equal(kind(t), null, JSON.stringify(t));
+  for (const t of [{ name: 'Zapłać' }, { name: 'Usuń konto' }, { name: 'Zapisz zmiany' }, { submitsNonLookupForm: true }, { sideEffectSignals: true }, { consent: true }, { knownSafe: false }])
+    assert.equal(kind(t), null, JSON.stringify(t));
+});
+test('whatever the candidate policy admits the action validator would also execute unconfirmed', () => {
+  const variants: Partial<ResolvedTarget>[] = [{}, { role: 'link' }, { role: 'textbox' }, { role: 'searchbox', maxLength: 5 }, { name: 'Zapłać' }, { knownSafe: false }, { disabled: true }, { role: 'textbox', sensitive: true }, { consent: true }, { drifted: true }, { visible: false }];
+  for (const v of variants) {
+    const found = kind(v);
+    if (found === null) continue;
+    const verdict = validateProposal({ ...proposal, action: found, text: found === 'fill' ? 'x' : '' }, { ...target, ...v });
+    assert.deepEqual(verdict, { ok: true, kind: found }, JSON.stringify(v));
+  }
+});

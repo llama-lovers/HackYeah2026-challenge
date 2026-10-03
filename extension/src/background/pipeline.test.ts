@@ -529,6 +529,67 @@ test('page text cannot turn exploration into an action and a stale turn speaks n
   await pipeline.runCommand(id, 7, 'co tu jest');
   assert.deepEqual(announced(), []);
 });
+// "co mogę zrobić?" (PAGE-03): candidates are local, the model only ranks, the recheck gates the answer, nothing is executable.
+const cand = (id: string, role: string, name: string) => ({ id, role, name });
+const sixCandidates = [cand('e1', 'link', 'Szukaj'), cand('e2', 'textbox', 'Wpisz numer'), cand('e3', 'button', 'Znajdź'), cand('e4', 'button', 'Pokaż mapę'), cand('e5', 'button', 'Pomoc'), cand('e6', 'link', 'Kontakt')];
+function actionsAdapter(opts: { candidates?: any[]; reply?: unknown; recheck?: (m: any) => unknown; incomplete?: boolean }) {
+  exploreCalls.length = 0;
+  const candidates = opts.candidates ?? sixCandidates;
+  g.fetch = async (url: string, init: RequestInit) => { exploreCalls.push({ url: String(url), body: JSON.parse(String(init.body)) }); return { ok: true, json: async () => 'reply' in opts ? opts.reply : { sentences: [], candidate_ids: candidates.slice(0, 4).map(c => c.id) } }; };
+  tabHandler = (_tab, m) => m.type === 'CANDIDATES' ? { ok: true, docId: 'doc-1', snapshot: { ...snapshot, nodes: [button] }, candidates, incomplete: opts.incomplete ?? false }
+    : m.type === 'RECHECK_CANDIDATES' ? (opts.recheck ? opts.recheck(m) : { ok: true, candidates: candidates.filter(c => m.ids.includes(c.id)) }) : { ok: true };
+}
+const noExecute = () => { assert(!tabCalls.some(c => c.message.type === 'EXECUTE')); assert(!exploreCalls.some(c => !c.url.endsWith('/api/explore'))); assert.equal(store.has('pending'), false); assert.equal(store.has('pendingEffect'), false); };
+test('"co mogę zrobić?" lists at most the standard cap, rendered locally, bound to the projected document and epoch', async () => {
+  actionsAdapter({});
+  await localCommand('Co mogę zrobić?');
+  assert.equal(exploreCalls.length, 1);
+  assert.deepEqual(exploreCalls[0]!.body.candidates, sixCandidates); assert.equal(exploreCalls[0]!.body.mode, 'actions'); assert.equal(exploreCalls[0]!.body.verbosity, 'standard');
+  const recheck = tabCalls.find(c => c.message.type === 'RECHECK_CANDIDATES')!.message;
+  assert.deepEqual(recheck, { type: 'RECHECK_CANDIDATES', docId: 'doc-1', epoch: 1, ids: ['e1', 'e2', 'e3', 'e4'] });
+  assert.deepEqual(announced(), ['Możesz otworzyć link Szukaj, wpisać tekst w pole Wpisz numer, kliknąć przycisk Znajdź i kliknąć przycisk Pokaż mapę.']);
+  noExecute();
+});
+test('unknown, duplicate, excessive, empty and malformed suggestions are rejected before speech', async () => {
+  for (const ids of [['e999', 'e1'], ['e1', 'e1'], ['e1', 'e2', 'e3', 'e4', 'e5'], []]) {
+    tabCalls.length = 0; actionsAdapter({ reply: { sentences: [], candidate_ids: ids } });
+    await localCommand('co mogę zrobić');
+    assert.deepEqual(announced(), ['Nie udało się sprawdzić, co można tu zrobić. Spróbuj jeszcze raz za chwilę.'], JSON.stringify(ids));
+    assert(!tabCalls.some(c => c.message.type === 'RECHECK_CANDIDATES')); noExecute();
+  }
+  for (const reply of [null, {}, { sentences: ['Zdanie.'], candidate_ids: ['e1'] }, { sentences: [], candidate_ids: ['e1'], action: 'click' }]) {
+    tabCalls.length = 0; actionsAdapter({ reply }); await localCommand('co mogę zrobić');
+    assert.deepEqual(announced(), ['Nie udało się sprawdzić, co można tu zrobić. Spróbuj jeszcze raz za chwilę.']); noExecute();
+  }
+});
+test('a page that changed during the model reply drops ineligible ids or reports the change honestly', async () => {
+  actionsAdapter({ recheck: m => ({ ok: true, candidates: [cand('e3', 'button', 'Znajdź')].filter(c => m.ids.includes(c.id)) }) });
+  await localCommand('co mogę zrobić');
+  assert.deepEqual(announced(), ['Możesz kliknąć przycisk Znajdź.']);
+  for (const recheck of [() => ({ ok: false, reason: 'stale' }), () => ({ ok: true, candidates: [] }), () => { throw new Error('gone'); }]) {
+    tabCalls.length = 0; actionsAdapter({ recheck }); await localCommand('co mogę zrobić');
+    assert.deepEqual(announced(), ['Strona zmieniła się w trakcie. Zapytaj jeszcze raz, co możesz zrobić.']);
+  }
+  tabCalls.length = 0; actionsAdapter({ recheck: () => ({ ok: true, candidates: [cand('e77', 'button', 'Obcy')] }) }); await localCommand('co mogę zrobić');
+  assert.deepEqual(announced(), ['Nie udało się sprawdzić, co można tu zrobić. Spróbuj jeszcze raz za chwilę.']); noExecute();
+});
+test('sparse pages report only the real actions and empty pages ask no model and invent nothing', async () => {
+  actionsAdapter({ candidates: sixCandidates.slice(0, 2), reply: { sentences: [], candidate_ids: ['e2'] } });
+  await localCommand('co mogę zrobić');
+  assert.deepEqual(announced(), ['Możesz wpisać tekst w pole Wpisz numer.']);
+  tabCalls.length = 0; actionsAdapter({ candidates: [] }); await localCommand('co mogę zrobić');
+  assert.deepEqual(announced(), ['Na tej stronie nie widzę działań, które mogę bezpiecznie wykonać. Zapytaj, co tu jest, albo otwórz inną stronę.']); assert.equal(exploreCalls.length, 0);
+  tabCalls.length = 0; actionsAdapter({ candidates: [], incomplete: true }); await localCommand('co mogę zrobić');
+  assert.match(announced()[0]!, /^Strona jest duża, więc mogłem nie zobaczyć wszystkiego\./); assert.doesNotMatch(announced()[0]!, /nie ma|brak/i);
+  tabCalls.length = 0; actionsAdapter({ candidates: sixCandidates.slice(0, 2), incomplete: true, reply: { sentences: [], candidate_ids: ['e1', 'e2'] } }); await localCommand('co mogę zrobić');
+  assert.deepEqual(announced(), ['Na początku strony możesz otworzyć link Szukaj i wpisać tekst w pole Wpisz numer.']); noExecute();
+});
+test('an unreadable page and an unreachable proxy are spoken without any execution', async () => {
+  actionsAdapter({}); tabHandler = () => { throw new Error('no receiver'); }; await localCommand('co mogę zrobić');
+  assert.deepEqual(announced(), ['Nie mogę bezpiecznie odczytać tej strony.']);
+  tabCalls.length = 0; actionsAdapter({}); g.fetch = async () => { throw new Error('offline'); }; await localCommand('co mogę zrobić');
+  assert.deepEqual(announced(), ['Nie udało się sprawdzić, co można tu zrobić. Spróbuj jeszcze raz za chwilę.']); noExecute();
+});
 // User-invoked temporary page access (T-03-03): injection happens only for ordinary top-level HTTP(S) pages, before any recording.
 const RESTRICTED = 'Tej strony nie obsługuję. Otwórz zwykłą stronę internetową i spróbuj jeszcze raz.';
 const NO_ACCESS = 'Nie mam dostępu do tej strony. Odśwież ją i spróbuj jeszcze raz.';

@@ -1,6 +1,6 @@
 import type { RejectReason, ConfirmCategory } from './validate.ts';
-import { truncate } from './snapshot-format.ts';
-import type { ParcelStatus, ExecutedAction } from './protocol.ts';
+import { truncate, collapse } from './snapshot-format.ts';
+import type { ParcelStatus, ExecutedAction, ExplorationCandidate } from './protocol.ts';
 import type { PageDiff } from './snapshot-format.ts';
 import { isEmptyDiff } from './diff.ts';
 import { STATUS_SPOKEN_MAX } from './limits.ts';
@@ -93,3 +93,26 @@ export function localEffect(action: ExecutedAction, diff: PageDiff, category?: C
 }
 export const EXPLORE_FAILED = 'Nie udało się opisać tej strony. Spróbuj jeszcze raz za chwilę.';
 export const PAGE_EMPTY = 'Ta strona wydaje się pusta albo jeszcze się ładuje. Poczekaj chwilę i zapytaj jeszcze raz.';
+export const ACTIONS_FAILED = 'Nie udało się sprawdzić, co można tu zrobić. Spróbuj jeszcze raz za chwilę.';
+export const ACTIONS_CHANGED = 'Strona zmieniła się w trakcie. Zapytaj jeszcze raz, co możesz zrobić.';
+export const NO_ACTIONS = 'Na tej stronie nie widzę działań, które mogę bezpiecznie wykonać. Zapytaj, co tu jest, albo otwórz inną stronę.';
+export const NO_ACTIONS_PARTIAL = 'Strona jest duża, więc mogłem nie zobaczyć wszystkiego. Na jej początku nie widzę działań, które mogę bezpiecznie wykonać. Zapytaj, co tu jest.';
+const spokenLabel = (name: string) => truncate(collapse(name).replace(/[\s.!?…:;,]+$/u, ''), 60);
+// Rendered from local role and name data only; model text never reaches speech for this list.
+export function actionPhrase(c: ExplorationCandidate): string {
+  const name = spokenLabel(c.name);
+  switch (c.role) {
+    case 'link': return `otworzyć link ${name}`;
+    case 'button': return `kliknąć przycisk ${name}`;
+    case 'menuitem': return `wybrać pozycję menu ${name}`;
+    case 'tab': return `przejść do karty ${name}`;
+    case 'checkbox': return `zaznaczyć lub odznaczyć ${name}`;
+    case 'radio': return `wybrać opcję ${name}`;
+    default: return `wpisać tekst w pole ${name}`;
+  }
+}
+export function actionsList(items: ExplorationCandidate[], incomplete: boolean): string {
+  const phrases = items.map(actionPhrase);
+  const joined = phrases.length === 1 ? phrases[0]! : phrases.slice(0, -1).join(', ') + ' i ' + phrases.at(-1)!;
+  return speakable((incomplete ? 'Na początku strony możesz ' : 'Możesz ') + joined + '.');
+}

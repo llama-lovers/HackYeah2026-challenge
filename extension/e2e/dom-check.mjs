@@ -101,12 +101,43 @@ try {
   const structural = await page.evaluate(`__snapTest.takeSnapshot()`);
   for (const name of ['Szukaj przez contents', 'Znajdź pozycjonowany', 'Szukaj shadow', 'Znajdź live', 'Szukaj nagłówek', 'Numer przesyłki']) assert.ok(structural.nodes.some(n => n.kind === 'interactive' && n.name === name), 'missing descendant ' + name);
   console.log('PASS dom-check: structural containers retain visible controls');
-  await page.evaluate(`document.body.innerHTML='<button type="button">Potwierdź płatność</button><button>Zapisz zmiany</button><button aria-label="Dalej">Zapłać za zamówienie</button><label><input type="checkbox">Wyrażam zgodę na regulamin</label><form method="get" role="search" class="tracking-form"><input placeholder="Numer karty"><button>Szukaj</button></form><form method="get"><input placeholder="Numer przesyłki"><button>Wyślij</button></form><form method="post" action="/payment"><input placeholder="Numer przesyłki"><button>Szukaj</button></form><form method="get"><input placeholder="Numer przesyłki"><button>Dalej</button></form><a href="/checkout/confirm">Dalej</a><button type="button">Pokaż mapę</button><form method="get" class="tracking-form"><input placeholder="Numer przesyłki"><button>Znajdź</button></form><form method="get" action="/payment/confirm"><input name="action" placeholder="Numer przesyłki"><input name="id" value="x"><button>Szukaj</button></form><form class="tracking-form"><input name="method" value="get"><input name="childNodes"><input name="getAttribute"><input placeholder="Numer przesyłki"><button>Szukaj</button></form><form method="get" action="/api/order"><input name="search" placeholder="Szukaj"><input type="hidden" name="confirm" value="1"><button>Szukaj</button></form><form method="get" action="https://evil.example/pay"><input name="search" placeholder="Szukaj"><button>Szukaj</button></form><form method="get"><input name="search" placeholder="Szukaj"><button formaction="/checkout/pay">Szukaj</button></form><form method="get"><input name="search" placeholder="Szukaj"><button formmethod="post">Szukaj</button></form>'`);
-  const policies = await page.evaluate(`(() => { const s=__snapTest.takeSnapshot();return s.nodes.filter(n=>n.kind==='interactive'&&['button','checkbox','link'].includes(n.role)).map((n,i)=>({i,name:n.name,verdict:__snapTest.validateProposal({action:'click',target:n.id,text:'',needs_confirmation:false,say:''},__snapTest.resolveTarget(n.id,s.epoch).target)})); })()`);
-  assert.equal(policies.length, 17);
-  // Everything is refused except the two positively identified harmless controls (a JS "Pokaż mapę" button and the tracking-form "Znajdź").
-  for (const { i, name, verdict } of policies) assert.deepEqual(verdict, [9, 10].includes(i) ? { ok: true, kind: 'click' } : { ok: false, reason: 'irreversible' }, `policy ${i} ${name}`);
-  console.log('PASS dom-check: Polish effects, consent, disguised forms and uncertain clicks');
+  // One clickable per snippet; [html, expected verdict ok]. Only genuine links, lookup submits and harmless disclosure buttons pass.
+  const cases = [
+    ['<button type="button">Potwierdź płatność</button>', false], ['<button>Zapisz zmiany</button>', false], ['<button aria-label="Dalej">Zapłać za zamówienie</button>', false],
+    ['<label><input type="checkbox">Wyrażam zgodę na regulamin</label>', false],
+    ['<form method="get" role="search" class="tracking-form"><input placeholder="Numer karty"><button>Szukaj</button></form>', false],
+    ['<form method="get"><input placeholder="Numer przesyłki"><button>Wyślij</button></form>', false],
+    ['<form method="post" action="/payment"><input placeholder="Numer przesyłki"><button>Szukaj</button></form>', false],
+    ['<form method="get"><input placeholder="Numer przesyłki"><button>Dalej</button></form>', false],
+    ['<a href="/checkout/confirm">Dalej</a>', false], ['<a href="/orders?action=delete">Moje zamówienia</a>', false], ['<a href="javascript:void(0)">Moje zamówienia</a>', false],
+    ['<form method="get" action="/payment/confirm"><input name="action" placeholder="Numer przesyłki"><input name="id" value="x"><button>Szukaj</button></form>', false],
+    ['<form class="tracking-form"><input name="method" value="get"><input name="childNodes"><input name="getAttribute"><input placeholder="Numer przesyłki"><button>Szukaj</button></form>', false],
+    ['<form method="get" action="/api/order"><input name="search" placeholder="Szukaj"><input type="hidden" name="confirm" value="1"><button>Szukaj</button></form>', false],
+    ['<form method="get" action="https://evil.example/pay"><input name="search" placeholder="Szukaj"><button>Szukaj</button></form>', false],
+    ['<form method="get"><input name="search" placeholder="Szukaj"><button formaction="/checkout/pay">Szukaj</button></form>', false],
+    ['<form method="get"><input name="search" placeholder="Szukaj"><button formmethod="post">Szukaj</button></form>', false],
+    ['<form method="foo"><input name="search" placeholder="Szukaj"><button>Szukaj</button></form>', false],
+    ['<form id="pay" method="post" action="/pay"></form><form method="get"><input placeholder="Numer przesyłki"><button form="pay">Znajdź</button></form>', false],
+    ['<form id="L" method="get"><input placeholder="Numer przesyłki"><button>Szukaj</button></form><input type="hidden" form="L" name="confirm" value="1">', false],
+    ['<form method="get"><img name="action" alt=""><input placeholder="Numer przesyłki"><button>Znajdź</button></form>', false],
+    ['<div role="button">Dalej</div>', false], ['<button type="button">Dalej</button>', false], ['<div role="link">Moje zamówienia</div>', false], ['<button type="button">Wyloguj się</button>', false],
+    ['<button type="button">Pokaż mapę</button>', true], ['<a href="/moje-zamowienia">Moje zamówienia</a>', true],
+    ['<form method="get" class="tracking-form"><input placeholder="Numer przesyłki"><button>Znajdź</button></form>', true],
+    ['<form id="A" method="get"><input form="B" name="note" placeholder="x"><input placeholder="Numer przesyłki"><button>Szukaj</button></form>', true],
+  ];
+  const verdicts = async () => page.evaluate(`(() => { const s=__snapTest.takeSnapshot();return s.nodes.filter(n=>n.kind==='interactive'&&['button','checkbox','link'].includes(n.role)).map(n=>({name:n.name,verdict:__snapTest.validateProposal({action:'click',target:n.id,text:'',needs_confirmation:false,say:''},__snapTest.resolveTarget(n.id,s.epoch).target)})); })()`);
+  for (const [html, ok] of cases) {
+    await page.evaluate(`document.body.innerHTML=${JSON.stringify(html)}`);
+    const result = await verdicts();
+    assert.equal(result.length, 1, 'one clickable: ' + html);
+    assert.deepEqual(result[0].verdict, ok ? { ok: true, kind: 'click' } : { ok: false, reason: 'irreversible' }, html);
+  }
+  // <base href> changes how the browser resolves a relative action, so the lookup exemption must not apply.
+  await page.evaluate(`document.body.innerHTML='<form method="get" action="/x"><input placeholder="Numer przesyłki"><button>Znajdź</button></form>'; const base=document.createElement('base'); base.href='https://evil.example/'; document.head.append(base);`);
+  assert.deepEqual((await verdicts())[0].verdict, { ok: false, reason: 'irreversible' });
+  await page.evaluate(`document.querySelector('base').remove()`);
+  assert.deepEqual((await verdicts())[0].verdict, { ok: true, kind: 'click' });
+  console.log('PASS dom-check: Polish effects, consent, disguised forms, clobbering, form owners, base URL and unclassified clicks');
   // A focus handler may turn the field sensitive between the last policy check and the native write.
   await page.evaluate(`document.body.innerHTML='<main><input id="f" placeholder="Numer przesyłki"></main><div id="host"></div>'; document.querySelector('#f').addEventListener('focus', e => { e.target.type = 'password'; })`);
   const focusRace = await page.evaluate(`(async () => { const s=__snapTest.takeSnapshot(), id=s.nodes.find(n=>n.role==='textbox').id; const result=await __snapTest.execute(s.epoch,{action:'fill',target:id,text:'873234987612340872938732',needs_confirmation:false,say:''},{host:document.querySelector('#host'),announce(){}}); return {result,value:document.querySelector('#f').value}; })()`);

@@ -2,7 +2,7 @@ import { MASK, maskText, isSensitiveField } from '../shared/mask.ts';
 import { MAX_NODES, MAX_TEXT, MAX_ALERT, collapse, truncate, stripQuery } from '../shared/snapshot-format.ts';
 import type { SnapNode, SnapState, Snapshot } from '../shared/snapshot-format.ts';
 import type { ResolvedTarget } from '../shared/validate.ts';
-import { IRREVERSIBLE_NAME_RE, SIDE_EFFECT_RE, LOOKUP_RE } from '../shared/validate.ts';
+import { IRREVERSIBLE_NAME_RE, SIDE_EFFECT_RE, LOOKUP_RE, BENIGN_UI_RE } from '../shared/validate.ts';
 import { LIVE_REGION_ID } from '../shared/protocol.ts';
 
 let epoch = 0;
@@ -207,18 +207,23 @@ export function takeSnapshot(doc: Document = document, opts?: { excludeRoot?: El
   return snapshot;
 }
 // A form is a lookup only when positively identified by its fields and has no payment/consent/account signals;
-// page-controlled hints (class, role) alone never exempt it. Every ambiguity (clobbered members, cross-origin or non-GET target) fails closed.
+// page-controlled hints (class, role) alone never exempt it. Every ambiguity (clobbered members, foreign form= owners,
+// <base> hijacking, cross-origin or non-GET target) fails closed: anything the browser might submit differently is refused.
 function isLookupForm(form: Element, submitter: Element): boolean {
   try {
-    const method = (attrOf(submitter, 'formmethod') || attrOf(form, 'method') || 'get').toLowerCase();
-    if (method !== 'get') return false;
-    const fields = queryAll(form, 'input,textarea,select,button,object,fieldset,output');
-    // A control named like a form member ("action", "id", "method", "elements"…) can shadow it; refuse rather than guess.
-    if (fields.some(field => [attrOf(field, 'name'), attrOf(field, 'id')].some(key => key !== '' && key in HTMLFormElement.prototype))) return false;
-    const targets = [attrOf(submitter, 'formaction'), attrOf(form, 'action')];
-    for (const target of targets) if (target && new URL(target, location.href).origin !== location.origin) return false;
+    const baseURI: string = getter(NODE, 'baseURI').call(document);
+    if (new URL(baseURI).origin !== location.origin) return false;
+    // Only an explicit, valid "get" (or no attribute at all) is a GET; any other value is refused even where the browser would fall back to GET.
+    const methods = [getAttr(submitter, 'formmethod'), getAttr(form, 'method')].filter((m): m is string => m !== null && m !== '');
+    if (methods.some(m => m !== 'get' && m !== 'GET')) return false;
+    // Real form membership (descendants with a foreign form= excluded, outside controls with form=<id> included), read through the prototype getter.
+    const fields: Element[] = Array.from(getter(HTMLFormElement.prototype, 'elements').call(form));
+    // A control or image named like a form member ("action", "id", "method", "elements"…) can shadow it; refuse rather than guess.
+    if ([...fields, ...queryAll(form, 'img,embed,object')].some(field => [attrOf(field, 'name'), attrOf(field, 'id')].some(key => key !== '' && key in HTMLFormElement.prototype))) return false;
+    const targets = [getAttr(submitter, 'formaction'), getAttr(form, 'action')].filter((t): t is string => t !== null && t !== '');
+    for (const target of targets) if (new URL(target, baseURI).origin !== location.origin) return false;
     const signals = [...targets, attrOf(form, 'id'), attrOf(form, 'name'), attrOf(form, 'aria-label'), labelText(form),
-      ...queryAll(form, 'input').flatMap(field => [attrOf(field, 'name'), attrOf(field, 'type') === 'hidden' ? attrOf(field, 'value') : ''])].map(safeDecode).join(' ');
+      ...fields.filter(field => matchesSel(field, 'input')).flatMap(field => [attrOf(field, 'name'), attrOf(field, 'type') === 'hidden' ? attrOf(field, 'value') : ''])].map(safeDecode).join(' ');
     if (IRREVERSIBLE_NAME_RE.test(signals) || SIDE_EFFECT_RE.test(signals)) return false;
     const inputs = fields.filter(field => attrOf(field, 'type') !== 'hidden' && matchesSel(field, 'input,textarea,select'));
     if (inputs.some(field => sensitive(field) || matchesSel(field, '[type=checkbox],[type=radio],[type=file],[type=password]'))) return false;
@@ -233,11 +238,19 @@ function submitsNonLookupForm(el: Element): boolean {
   if (!isLookupForm(form, el)) return true;
   return !!control && ['submit', 'image'].includes(control.type) && !LOOKUP_RE.test(collapse(computeName(el)));
 }
+// Positive classification: only genuine http(s) anchors and controls named like a lookup or a harmless disclosure are known safe.
+// Everything else (JS buttons, role=button divs, checkboxes, tabs with neutral names) is an uncertain side effect and is refused.
+function knownSafeClick(el: Element): boolean {
+  if (el instanceof HTMLAnchorElement && roleOf(el) === 'link') return /^https?:$/.test(new URL(el.href).protocol);
+  const name = collapse(computeName(el));
+  return LOOKUP_RE.test(name) || BENIGN_UI_RE.test(name);
+}
+function safeKnownSafeClick(el: Element): boolean { try { return knownSafeClick(el); } catch { return false; } }
 // Payment, account-change and consent wording in any label of the control or in its destination (link path, form action).
 function sideEffectSignals(el: Element): boolean {
   const texts = [computeName(el), visibleText(el), getAttr(el, 'aria-label'), getAttr(el, 'title'), getAttr(el, 'formaction')];
   if (el instanceof HTMLInputElement) texts.push(el.value);
-  if (el instanceof HTMLAnchorElement) texts.push(safeDecode(el.pathname));
+  if (el instanceof HTMLAnchorElement) texts.push(safeDecode(el.pathname), safeDecode(el.search), safeDecode(el.hash));
   return texts.some(text => !!text && (IRREVERSIBLE_NAME_RE.test(text) || SIDE_EFFECT_RE.test(text)));
 }
 // Any failure while collecting signals is itself ambiguous, so it counts as a signal.
@@ -251,6 +264,6 @@ export function resolveTarget(id: string, requestedEpoch: number): { target: Res
   const maxLength = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.maxLength : -1;
   return { element, node, target: { exists: true, epochMatches: requestedEpoch === epoch, connected: connectedOf(element),
     visible: isElementVisible(element), disabled: isElementDisabled(element), role, sensitive: !!(entry.node.state?.sensitive || liveState.sensitive), name,
-    maxLength: maxLength >= 0 ? maxLength : null, submitsNonLookupForm: submitsNonLookupForm(element), sideEffectSignals: safeSideEffectSignals(element) } };
+    maxLength: maxLength >= 0 ? maxLength : null, submitsNonLookupForm: submitsNonLookupForm(element), sideEffectSignals: safeSideEffectSignals(element), knownSafe: safeKnownSafeClick(element) } };
 }
 export function getLastSnapshot(): Snapshot | null { return last; }

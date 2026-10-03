@@ -211,7 +211,6 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
   const text = rawText.trim();
   if (!text) { await say(msg.NOTHING_HEARD); return; }
   const intent = parseIntent(text);
-  if (intent.kind === 'secret_request') { await say(msg.SECRET_REFUSAL); return; }
   if (intent.kind === 'captcha_request') { await say(msg.CAPTCHA_REFUSAL); return; }
   const pending = await claimPending(turnId);
   if (pending && pending.tabId === tabId) {

@@ -29,7 +29,7 @@ export async function run(ctx) {
   assert.notEqual(await sensitive.evaluate('window.__paid'), true);
   assert.equal((await ctx.upstreamSince(mark)).length, 1);
   await ctx.speak(sensitive, 'wpisz 1234 w pole hasło');
-  await ctx.waitForLive(sensitive, 'Nie wpisuję haseł, kodów z SMS i BLIK ani innych danych poufnych. Wpisz je samodzielnie albo poproś o pomoc zaufaną osobę.');
+  await ctx.waitForLive(sensitive, 'Tego pola nie wypełniam, bo jest na dane poufne. Wypełnij je samodzielnie albo poproś o pomoc zaufaną osobę.');
   await ctx.waitIdle();
   assert.equal(await sensitive.evaluate("document.querySelector('[type=password]').value"), 'Tajne!Haslo1');
   assert(!(await ctx.liveLog(sensitive)).some(s => s.startsWith('Wpisuję')));

@@ -7,7 +7,6 @@ import { STATUS_SPOKEN_MAX } from './limits.ts';
 import { spellInteger, speakable } from './polish-speech.ts';
 import type { ChoiceOption } from './choice.ts';
 export const CHOICE_UNCLEAR = 'Nie jestem pewien, o który element chodzi. Powiedz polecenie dokładniej.';
-export const SECRET_REFUSAL = 'Nie wpisuję haseł, kodów z SMS i BLIK ani innych danych poufnych. Wpisz je samodzielnie albo poproś o pomoc zaufaną osobę.';
 export const CAPTCHA_REFUSAL = 'Nie rozwiązuję zabezpieczeń captcha. Poproś o pomoc zaufaną osobę.';
 export const CAPTCHA_ON_PAGE = 'Strona pokazuje zabezpieczenie captcha. Nie rozwiązuję go. Poproś o pomoc zaufaną osobę.';
 export function choicePrompt(options: ChoiceOption[]): string { return 'Pasuje kilka elementów. ' + options.map((o,i) => `${['Jeden','Dwa','Trzy'][i]}: ${o.name}${o.context ? ', ' + o.context : ''}.`).join(' ') + ' Który? Powiedz numer.'; }

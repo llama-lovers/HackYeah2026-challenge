@@ -10,13 +10,15 @@ class TranscriptionError(Exception):
 
 
 def transcribe(audio_bytes: bytes, mime: str) -> str:
-    """Return raw Polish text without number normalization; silence returns "".
+    """Return filtered Polish text without number normalization; silence returns "".
 
     Provider failures raise TranscriptionError(code). The teammate implementation
     POSTs to https://openrouter.ai/api/v1/audio/transcriptions using
-    openai/whisper-large-v3-turbo (fallback openai/whisper-1), language "pl", a
-    10 s timeout and OPENROUTER_API_KEY from the environment. Never log or persist
-    audio or transcripts. Called from a worker thread, never the event loop.
+    STT_MODEL (default openai/whisper-large-v3-turbo), language "pl", a
+    10 s timeout per chunk and OPENROUTER_API_KEY from the environment. Audio
+    is prepared using Silero VAD and silence trimming before upload, and persisted
+    only when STT_AUDIO_DEBUG_DIR enables local debugging; transcripts are never
+    persisted here. Called from a worker thread, never the event loop.
     """
     try:
         from app.stt_whisper import transcribe_whisper

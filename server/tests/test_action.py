@@ -8,8 +8,21 @@ from app.config import Settings
 from app.schemas import ACTION_SCHEMA
 from conftest import make_client, openrouter_reply
 
-PROPOSAL = {"action": "click", "target": "e4", "text": "", "needs_confirmation": False, "say": ""}
+PROPOSAL = {"action": "click", "target": "e4", "text": "", "needs_confirmation": False, "say": "", "option_1": "", "option_2": "", "option_3": ""}
 BODY = {"utterance": "kliknij Znajdź", "snapshot": 'button e4 "Znajdź"'}
+
+def test_choose_schema_and_roundtrip():
+    assert "choose" in ACTION_SCHEMA["properties"]["action"]["enum"]
+    assert all(key in ACTION_SCHEMA["required"] for key in ["option_1", "option_2", "option_3"])
+    proposal = {**PROPOSAL, "action": "choose", "target": "", "option_1": "e5", "option_2": "e9"}
+    with make_client(lambda request: openrouter_reply(json.dumps(proposal))) as client:
+        assert client.post("/api/action", json=BODY).json() == proposal
+
+def test_overlong_choice_id_is_invalid_output():
+    proposal = {**PROPOSAL, "action": "choose", "option_1": "e" * 33}
+    with make_client(lambda request: openrouter_reply(json.dumps(proposal))) as client:
+        result = client.post("/api/action", json=BODY)
+    assert result.status_code == 502 and result.json() == {"error": "model_invalid_output"}
 
 
 def test_strict_request_and_polish_utf8():

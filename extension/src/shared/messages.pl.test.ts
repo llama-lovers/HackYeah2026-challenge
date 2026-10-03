@@ -69,3 +69,10 @@ test('local effect describes observed transitions alerts text and controls', () 
   assert.equal(f(action, { ...empty, added: ['button Pomoc', 'W drodze 12345678'] }), 'Kliknąłem Znajdź. Na stronie pojawiło się: W drodze 12345678.');
   assert.equal(f(action, { ...empty, added: ['button Pomoc'] }), 'Kliknąłem Znajdź. Strona się zmieniła.');
 });
+test('numbered choices speak DOM names and bounded number-only reprompts', async () => {
+  const m: any = await import('./messages.pl.ts');
+  const options = ['Krakowa','Gdańska','Poznania'].map(city => ({id:city,role:'button',name:'Szczegóły paczki z '+city}));
+  assert.equal(m.choicePrompt?.(options),'Pasuje kilka elementów. Jeden: Szczegóły paczki z Krakowa. Dwa: Szczegóły paczki z Gdańska. Trzy: Szczegóły paczki z Poznania. Który? Powiedz numer.');
+  assert.equal(m.choiceReprompt(2),'Powiedz jeden albo dwa.');
+  assert.equal(m.choiceReprompt(3),'Powiedz jeden, dwa albo trzy.');
+});

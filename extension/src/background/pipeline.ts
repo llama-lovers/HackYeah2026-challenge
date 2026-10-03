@@ -1,5 +1,5 @@
-import { SESSION_KEYS, VERBOSITY_KEY, PENDING_EFFECT_MAX_AGE_MS, decodeScrollResult } from '../shared/protocol.ts';
-import type { PingResult, FromOffscreen, SnapshotResult, CandidatesResult, ExecuteResult, ExecutedAction, EffectResponse, PendingEffectJob, SettleDiffResult, ReadStatusResult } from '../shared/protocol.ts';
+import { SESSION_KEYS, VERBOSITY_KEY, PENDING_EFFECT_MAX_AGE_MS, decodeScrollResult, decodeProposal, decodeEffect } from '../shared/protocol.ts';
+import type { PingResult, FromOffscreen, SnapshotResult, CandidatesResult, ExecuteResult, ExecutedAction, PendingEffectJob, SettleDiffResult, ReadStatusResult } from '../shared/protocol.ts';
 import type { PageDiff, Snapshot } from '../shared/snapshot-format.ts';
 import { parseIntent, isCaptchaLabel } from '../shared/intent.ts';
 import { wordsToDigits, digitsToSpokenGroups, speakable } from '../shared/polish-speech.ts';
@@ -21,7 +21,7 @@ import type { Verbosity } from '../shared/protocol.ts';
 import { parseExploreCommand, decodeSummary, decodeActions, decodeRecheck, ACTION_CAPS } from '../shared/exploration.ts';
 import { toModelText, spokenName } from '../shared/snapshot-format.ts';
 import * as msg from '../shared/messages.pl.ts';
-import { postJson, EgressBlockedError } from './proxy.ts';
+import { postJson, classifyFailure } from './proxy.ts';
 let creating: Promise<void> | undefined;
 export async function getTurn(): Promise<TurnState> {
   return (await chrome.storage.session.get(SESSION_KEYS.turn))[SESSION_KEYS.turn] as TurnState | undefined ?? { phase: 'idle', startedAt: Date.now() };
@@ -101,8 +101,8 @@ export async function announceEffect(tabId: number, action: ExecutedAction, diff
   if (isEmptyDiff(diff)) { await say(msg.noChange(action.kind, action.name)); return; }
   let text: string;
   try {
-    const reply = await postJson<EffectResponse>('/api/effect', { action, diff, verbosity: await getVerbosity() }, 12000, signal);
-    text = speakable(reply.say).trim() || msg.effectFallback(action.kind, action.name);
+    const reply = decodeEffect(await postJson<unknown>('/api/effect', { action, diff, verbosity: await getVerbosity() }, 12000, signal));
+    text = (reply === null ? '' : speakable(reply).trim()) || msg.effectFallback(action.kind, action.name);
   } catch { text = msg.effectFallback(action.kind, action.name); }
   if (signal?.aborted) return;
   await say(text);
@@ -162,7 +162,7 @@ export function rehydrateWait(): Promise<void> { return runSerial(async () => { 
 // Simulates the loss of everything in worker memory (a killed worker) for tests; stored state is untouched.
 export function forgetWorkerMemory(): void { clearWaits(); }
 export async function resetTurnIf(id: string | undefined): Promise<void> { if ((await getTurn()).id === id) await resetTurn(); }
-export function handleToggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promise<void> { return runSerial(() => toggle(tab, opts)); }
+export function handleToggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promise<void> { return runSerial(() => toggle(tab, opts)).catch(() => { speakTts(msg.STORAGE_FAILED); }); }
 async function toggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promise<void> {
   if (tab.id === undefined) return;
   const state = await getTurn();
@@ -176,16 +176,23 @@ async function toggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promi
     await setTurn(next);
     if (!(await preparePageAccess(tab))) { await resetTurnIf(next.id); return; }
     try { await ensureOffscreen(); await chrome.runtime.sendMessage({ target: 'offscreen', type: 'REC_START', turnId: next.id }); }
-    catch { await announce(tab.id, msg.MIC_NO_DEVICE, 'status'); await resetTurnIf(next.id); }
+    catch { await announce(tab.id, msg.MIC_FAILED, 'status'); await resetTurnIf(next.id); }
   } else {
     await setTurn(next); armWait(next);
     try { await chrome.runtime.sendMessage({ target: 'offscreen', type: 'REC_STOP', turnId: state.id, ...(__E2E__ && state.stubText !== undefined ? { stubText: state.stubText } : {}) }); }
-    catch { await announce(state.tabId, msg.STT_FAILED, 'status'); await resetTurnIf(state.id); }
+    catch { await announce(state.tabId, msg.NOT_RECORDING, 'status'); await resetTurnIf(state.id); }
   }
 }
+// Entry points never let a rejection escape as silence: a failure to even read or write the turn is spoken once through the fallback voice.
 export async function handleOffscreenMessage(message: FromOffscreen): Promise<void> {
-  const work = await runSerial(() => onOffscreen(message));
-  if (work) await work();
+  try {
+    const work = await runSerial(() => onOffscreen(message));
+    if (work) await work();
+  } catch { speakTts(msg.STORAGE_FAILED); }
+}
+// The turn's one failure line: only the owning turn speaks it (a replaced, closed or finished turn stays silent), and a speaking failure falls back to TTS.
+async function failTurn(turnId: string, tabId: number | undefined, text: string): Promise<void> {
+  try { await speakTurn(turnId, tabId, text); } catch { speakTts(text); }
 }
 async function onOffscreen(message: FromOffscreen): Promise<(() => Promise<void>) | void> {
   const turn = await getTurn();
@@ -202,15 +209,16 @@ async function onOffscreen(message: FromOffscreen): Promise<(() => Promise<void>
       if (turn.phase === 'recording') { const next = toProcessing(turn, Date.now()); await setTurn(next); armWait(next); }
       await announce(turn.tabId, msg.PROCESSING, 'status'); break;
     case 'MIC_ERROR':
-      await announce(turn.tabId, message.code === 'not_allowed' ? msg.MIC_DENIED : msg.MIC_NO_DEVICE, 'status');
+      await announce(turn.tabId, msg.MIC_FAILURES[message.code], 'status');
       if (message.code === 'not_allowed') await chrome.runtime.openOptionsPage().catch(() => {});
       await resetTurnIf(turn.id); break;
-    case 'TRANSCRIBE_ERROR': await announce(turn.tabId, msg.STT_FAILED, 'status'); await resetTurnIf(turn.id); break;
+    case 'TRANSCRIBE_ERROR': await announce(turn.tabId, msg.STT_FAILURES[message.code], 'status'); await resetTurnIf(turn.id); break;
     case 'TRANSCRIPT':
       await setTurn({ ...turn, commandStarted: true });
       return async () => {
         let outcome: 'handoff' | void = undefined;
         try { outcome = await runCommand(turn.id!, turn.tabId, message.text); }
+        catch { await failTurn(turn.id!, turn.tabId, msg.PIPELINE_FAILED); }
         finally { controllers.delete(turn.id!); if (outcome !== 'handoff') await runSerial(() => resetTurnIf(turn.id)); }
       };
   }
@@ -220,7 +228,17 @@ async function getJob(): Promise<PendingEffectJob | undefined> { return (await c
 async function dropJob(id: string): Promise<void> { if ((await getJob())?.id === id) await chrome.storage.session.remove(JOB); }
 async function ownsTurn(turnId: string): Promise<boolean> { return !turnSignal(turnId).aborted && (await getTurn()).id === turnId; }
 export async function getPending(): Promise<PendingInteraction | undefined> { return (await chrome.storage.session.get(SESSION_KEYS.pending))[SESSION_KEYS.pending] as PendingInteraction | undefined; }
-export function setPending(turnId: string, pending: PendingInteraction): Promise<void> { return runSerial(async () => { if (await ownsTurn(turnId)) await chrome.storage.session.set({ [SESSION_KEYS.pending]: pending }); }); }
+// 'stale': the turn no longer owns the pipeline (nothing stored); 'failed': storage refused the write. A question is asked only once its answer can be remembered.
+export function setPending(turnId: string, pending: PendingInteraction): Promise<'stored' | 'stale' | 'failed'> {
+  return runSerial(async () => {
+    if (!(await ownsTurn(turnId))) return 'stale';
+    try { await chrome.storage.session.set({ [SESSION_KEYS.pending]: pending }); return 'stored'; } catch { return 'failed'; }
+  });
+}
+async function askPending(run: { turnId: string; tabId: number | undefined }, pending: PendingInteraction, prompt: string, intent: OutputIntent = 'substantive'): Promise<void> {
+  const stored = await setPending(run.turnId, pending);
+  if (stored !== 'stale') await speakTurn(run.turnId, run.tabId, stored === 'failed' ? msg.STORAGE_FAILED : prompt, stored === 'failed' ? 'status' : intent);
+}
 export function claimPending(turnId: string): Promise<PendingInteraction | undefined> { return runSerial(async () => { if (!(await ownsTurn(turnId))) return undefined; const p = await getPending(); await chrome.storage.session.remove(SESSION_KEYS.pending); return p; }); }
 export type CommandRun = { turnId: string; tabId: number; signal: AbortSignal; budget: StepBudget };
 type ProposalStep = { proposal: Proposal; epoch: number; docId: string; preSnapshot: Snapshot; announce: 'model' | 'none' | 'local'; confirmed?: boolean; context?: string; category?: ConfirmCategory };
@@ -254,8 +272,7 @@ export async function performProposal(run: CommandRun, step: ProposalStep): Prom
   if (!(await ownsTurn(turnId))) return 'stopped';
   if (!executed.ok) {
     if (executed.confirm && step.confirmed !== true && (proposal.action === 'click' || proposal.action === 'fill')) {
-      await setPending(turnId, { kind: 'confirm_action', proposal, epoch: step.epoch, docId: step.docId, preSnapshot: step.preSnapshot, ...executed.confirm, context: step.context, id: crypto.randomUUID(), tabId, createdAt: Date.now(), reprompts: 0 });
-      await say(msg.confirmPrompt(proposal.action, executed.confirm.name, executed.confirm.category, step.context));
+      await askPending(run, { kind: 'confirm_action', proposal, epoch: step.epoch, docId: step.docId, preSnapshot: step.preSnapshot, ...executed.confirm, context: step.context, id: crypto.randomUUID(), tabId, createdAt: Date.now(), reprompts: 0 }, msg.confirmPrompt(proposal.action, executed.confirm.name, executed.confirm.category, step.context));
     } else await say(msg.rejectionText(executed.reason));
     return 'stopped';
   }
@@ -289,8 +306,7 @@ async function parcelReadback(run: CommandRun, digits: string): Promise<void> {
     const result: SnapshotResult = await chrome.tabs.sendMessage(run.tabId, { type: 'SNAPSHOT' }, { frameId: 0 });
     if (!result.ok) { await say(msg.SNAPSHOT_FAILED); return; }
     if (!pickParcelField(result.snapshot) || !pickSearchButton(result.snapshot)) { await say(msg.PARCEL_FORM_MISSING); return; }
-    await setPending(run.turnId, { kind: 'confirm_parcel', digits, id: crypto.randomUUID(), tabId: run.tabId, createdAt: Date.now(), reprompts: 0 });
-    await say(msg.parcelReadback(digitsToSpokenGroups(digits)));
+    await askPending(run, { kind: 'confirm_parcel', digits, id: crypto.randomUUID(), tabId: run.tabId, createdAt: Date.now(), reprompts: 0 }, msg.parcelReadback(digitsToSpokenGroups(digits)));
   } catch { await say(msg.SNAPSHOT_FAILED); }
 }
 // The id of the document currently in frame 0 of the tab, or undefined when no receiver answers.
@@ -350,7 +366,7 @@ async function runSummary(run: CommandRun): Promise<void> {
   if (!result.snapshot.nodes.length) { await say(msg.PAGE_EMPTY); return; }
   let reply: unknown;
   try { reply = await postJson<unknown>('/api/explore', { mode: 'summary', verbosity: await getVerbosity(), snapshot: toModelText(result.snapshot), candidates: [] }, 20000, signal); }
-  catch (error) { await say(error instanceof EgressBlockedError ? msg.SNAPSHOT_FAILED : msg.EXPLORE_FAILED); return; }
+  catch (error) { await say(msg.failureText(classifyFailure(error), 'explore')); return; }
   if (!(await ownsTurn(turnId))) return;
   const sentences = decodeSummary(reply);
   await say(sentences ? sentences.join(' ') : msg.EXPLORE_FAILED);
@@ -372,7 +388,7 @@ async function runActions(run: CommandRun): Promise<void> {
   let reply: unknown;
   const verbosity = await getVerbosity();
   try { reply = await postJson<unknown>('/api/explore', { mode: 'actions', verbosity, snapshot: toModelText(snapshot), candidates }, 20000, signal); }
-  catch (error) { await say(error instanceof EgressBlockedError ? msg.SNAPSHOT_FAILED : msg.ACTIONS_FAILED); return; }
+  catch (error) { await say(msg.failureText(classifyFailure(error), 'actions')); return; }
   if (!(await ownsTurn(turnId))) return;
   const ids = decodeActions(reply, candidates.map(c => c.id), ACTION_CAPS[verbosity]);
   if (!ids) { await say(msg.ACTIONS_FAILED); return; }
@@ -413,9 +429,9 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
       return outcome === 'handoff' ? 'handoff' : undefined;
     }
     if (reply.kind === 'cancel') { await say(msg.CANCELLED, 'status'); return; }
-    if (reply.kind === 'reprompt') { await setPending(turnId, { ...pending, reprompts: pending.reprompts + 1 }); await say(pending.kind === 'choose_option' ? msg.choiceReprompt(pending.options.length) : msg.CONFIRM_REPROMPT, 'status'); return; }
+    if (reply.kind === 'reprompt') { await askPending(run, { ...pending, reprompts: pending.reprompts + 1 }, pending.kind === 'choose_option' ? msg.choiceReprompt(pending.options.length) : msg.CONFIRM_REPROMPT, 'status'); return; }
     if (reply.kind === 'number') return parcelReadback(run, reply.digits);
-    if (reply.kind === 'bad_number') { await setPending(turnId, { ...pending, reprompts: pending.reprompts + 1 }); await say(reply.count === null ? msg.PARCEL_NOT_UNDERSTOOD : msg.parcelWrongLength(reply.count)); return; }
+    if (reply.kind === 'bad_number') { await askPending(run, { ...pending, reprompts: pending.reprompts + 1 }, reply.count === null ? msg.PARCEL_NOT_UNDERSTOOD : msg.parcelWrongLength(reply.count)); return; }
     if (reply.kind === 'expired') {
       const number = wordsToDigits(text);
       const parcelReply = (pending.kind === 'await_parcel_number' || pending.kind === 'confirm_parcel') && number.ok && number.digits.length > 0;
@@ -429,8 +445,7 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
     if (tabId === undefined) { await say(msg.SNAPSHOT_FAILED); return; }
     const number = wordsToDigits(intent.rest);
     if (number.ok && isParcelDigits(number.digits)) return parcelReadback(run, number.digits);
-    await setPending(turnId, { kind: 'await_parcel_number', id: crypto.randomUUID(), tabId, createdAt: Date.now(), reprompts: 0 });
-    await say(!intent.rest ? msg.PARCEL_ASK_NUMBER : !number.ok ? msg.PARCEL_NOT_UNDERSTOOD : msg.parcelWrongLength(number.digits.length));
+    await askPending(run, { kind: 'await_parcel_number', id: crypto.randomUUID(), tabId, createdAt: Date.now(), reprompts: 0 }, !intent.rest ? msg.PARCEL_ASK_NUMBER : !number.ok ? msg.PARCEL_NOT_UNDERSTOOD : msg.parcelWrongLength(number.digits.length));
     return;
   }
   if (intent.kind === 'yes' || intent.kind === 'no') { await say(msg.NOTHING_TO_CONFIRM, 'status'); return; }
@@ -441,26 +456,26 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
     if (!result.ok) throw new Error('snapshot_failed');
   } catch { await say(msg.SNAPSHOT_FAILED); return; }
   if (!(await ownsTurn(turnId))) return;
-  let proposal: Proposal;
+  let proposal: Proposal | null;
   try {
     const utterance = Array.from(maskText(text)).slice(0, 500).join('');
-    proposal = await postJson('/api/action', { utterance, snapshot: toModelText(result.snapshot) }, 20000, signal);
-  } catch (error) { await say(error instanceof EgressBlockedError ? msg.SNAPSHOT_FAILED : msg.ASSISTANT_FAILED); return; }
+    proposal = decodeProposal(await postJson<unknown>('/api/action', { utterance, snapshot: toModelText(result.snapshot) }, 20000, signal));
+  } catch (error) { await say(msg.failureText(classifyFailure(error), 'assistant')); return; }
   if (!(await ownsTurn(turnId))) return;
+  // A body that does not decode (empty, wrong types, unknown action) is a failure: nothing is sent to the page.
+  if (!proposal) { await say(msg.ASSISTANT_INVALID); return; }
   if (proposal.action === 'choose') {
     const action = proposal.text ? 'fill' : 'click';
     const options = addContexts(result.snapshot, optionsFromIds(result.snapshot, [proposal.option_1 ?? '', proposal.option_2 ?? '', proposal.option_3 ?? ''], action));
     if (options.length < 2) { await say(msg.CHOICE_UNCLEAR); return; }
-    await setPending(turnId, {kind:'choose_option',action,text:proposal.text,needsConfirmation:proposal.needs_confirmation,epoch:result.snapshot.epoch,docId:result.docId,preSnapshot:result.snapshot,options,id:crypto.randomUUID(),tabId:tabId!,createdAt:Date.now(),reprompts:0});
-    await say(msg.choicePrompt(options)); return;
+    await askPending(run, {kind:'choose_option',action,text:proposal.text,needsConfirmation:proposal.needs_confirmation,epoch:result.snapshot.epoch,docId:result.docId,preSnapshot:result.snapshot,options,id:crypto.randomUUID(),tabId:tabId!,createdAt:Date.now(),reprompts:0}, msg.choicePrompt(options)); return;
   }
   if (proposal.action === 'click' || proposal.action === 'fill') {
     const node = result.snapshot.nodes.find(n => n.id === proposal.target);
     if (node && (isCaptchaLabel(node.name) || isCaptchaLabel(node.hint ?? ''))) { await say(msg.CAPTCHA_REFUSAL); return; }
     const options = duplicateOptions(result.snapshot, proposal.target);
     if (options.length >= 2) {
-      await setPending(turnId, {kind:'choose_option',action:proposal.action,text:proposal.text,needsConfirmation:proposal.needs_confirmation,epoch:result.snapshot.epoch,docId:result.docId,preSnapshot:result.snapshot,options,id:crypto.randomUUID(),tabId:tabId!,createdAt:Date.now(),reprompts:0});
-      await say(msg.choicePrompt(options)); return;
+      await askPending(run, {kind:'choose_option',action:proposal.action,text:proposal.text,needsConfirmation:proposal.needs_confirmation,epoch:result.snapshot.epoch,docId:result.docId,preSnapshot:result.snapshot,options,id:crypto.randomUUID(),tabId:tabId!,createdAt:Date.now(),reprompts:0}, msg.choicePrompt(options)); return;
     }
   }
   const outcome = await performProposal(run, { proposal, epoch: result.snapshot.epoch, docId: result.docId, preSnapshot: result.snapshot, announce: 'model' });
@@ -478,6 +493,7 @@ export function handleExecuting(tabId: number | undefined, message: { turnId: st
   });
 }
 export function expireJob(jobId: string): Promise<void> {
+  // A job that cannot even be expired in storage is still reported honestly: the effect is unknown.
   return runSerial(async () => {
     const job = await getJob();
     if (!job || job.id !== jobId || job.state !== 'executed') return;
@@ -485,7 +501,7 @@ export function expireJob(jobId: string): Promise<void> {
     if ((await getTurn()).id !== job.turnId) return;
     await announce(job.tabId, msg.EFFECT_UNKNOWN);
     await resetTurnIf(job.turnId);
-  });
+  }).catch(() => { speakTts(msg.EFFECT_UNKNOWN); });
 }
 export function handleTabRemoved(tabId: number): Promise<void> {
   return runSerial(async () => {
@@ -496,7 +512,8 @@ export function handleTabRemoved(tabId: number): Promise<void> {
     if (turn.phase !== 'idle' && turn.tabId === tabId) { abortTurn(turn.id); await resetTurnIf(turn.id); }
   });
 }
-export async function handleReady(tabId: number): Promise<void> {
+export function handleReady(tabId: number): Promise<void> { return readyBody(tabId).catch(() => { speakTts(msg.STORAGE_FAILED); }); }
+async function readyBody(tabId: number): Promise<void> {
   const job = await runSerial(async () => {
     armWait(await getTurn());
     // A new document in this tab: whatever it said before belongs to a page that no longer exists.

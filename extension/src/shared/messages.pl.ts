@@ -1,6 +1,6 @@
 import type { RejectReason, ConfirmCategory } from './validate.ts';
 import { truncate, collapse } from './snapshot-format.ts';
-import type { ParcelStatus, ExecutedAction, ExplorationCandidate, Verbosity, ScrollDirection, ScrollOutcome } from './protocol.ts';
+import type { ParcelStatus, ExecutedAction, ExplorationCandidate, Verbosity, ScrollDirection, ScrollOutcome, SttErrorCode, MicErrorCode, FailureKind } from './protocol.ts';
 import type { PageDiff } from './snapshot-format.ts';
 import { isEmptyDiff } from './diff.ts';
 import { STATUS_SPOKEN_MAX } from './limits.ts';
@@ -46,7 +46,7 @@ export const NOTHING_HEARD = 'Nic nie usłyszałem. Spróbuj jeszcze raz.';
 export const PAGE_UNSUPPORTED = 'Tej strony nie obsługuję. Otwórz zwykłą stronę internetową i spróbuj jeszcze raz.';
 export const PAGE_ACCESS_FAILED = 'Nie mam dostępu do tej strony. Odśwież ją i spróbuj jeszcze raz.';
 export const RELOAD_PAGE = 'Odśwież stronę i spróbuj jeszcze raz.';
-export const MIC_DENIED = 'Brak dostępu do mikrofonu. Otwieram ustawienia wtyczki.';
+export const MIC_DENIED = 'Brak dostępu do mikrofonu. Otwieram ustawienia wtyczki. Włącz tam mikrofon.';
 export const MIC_NO_DEVICE = 'Nie znalazłem mikrofonu. Podłącz mikrofon i spróbuj jeszcze raz.';
 export const OPTIONS_MIC_GRANTED = 'Mikrofon włączony. Możesz zamknąć tę kartę i nacisnąć skrót na stronie InPost.';
 export const OPTIONS_MIC_BLOCKED = 'Dostęp do mikrofonu jest zablokowany. Włącz go w ustawieniach Chrome: chrome://settings/content/microphone, a potem naciśnij przycisk jeszcze raz.';
@@ -55,10 +55,11 @@ export function optionsShortcut(key: string): string { return `Skrót nagrywania
 export const OPTIONS_SHORTCUT_MISSING = 'Skrót nagrywania nie jest ustawiony. Ustaw go na stronie chrome://extensions/shortcuts.';
 export const STT_FAILED = 'Nie udało się rozpoznać mowy. Spróbuj jeszcze raz.';
 export const ASSISTANT_FAILED = 'Nie udało się połączyć z asystentem. Spróbuj jeszcze raz za chwilę.';
-export const SNAPSHOT_FAILED = 'Nie mogę bezpiecznie odczytać tej strony.';
+export const SNAPSHOT_FAILED = 'Nie mogę bezpiecznie odczytać tej strony. Odśwież ją albo otwórz inną stronę.';
 export const NONE_FALLBACK = 'Nie rozumiem polecenia. Powiedz je inaczej.';
 export const ACTION_FAILED = 'Nie udało się wykonać tej akcji. Spróbuj jeszcze raz.';
-export const EFFECT_UNKNOWN = 'Wykonałem polecenie, ale nie mogę potwierdzić, co się zmieniło na stronie.';
+// After an action whose effect is uncertain the user is told so and sent to a read-only check; a consequential action is never suggested for repetition.
+export const EFFECT_UNKNOWN = 'Wykonałem polecenie, ale nie mogę potwierdzić, co się zmieniło na stronie. Powiedz „co tu jest”, żeby to sprawdzić.';
 export const NEEDS_CONFIRMATION = 'Tej akcji nie wykonam bez potwierdzenia. Powiedz polecenie jeszcze raz.';
 export function confirmPrompt(kind: 'click' | 'fill', name: string, category: ConfirmCategory, context?: string): string {
   return (kind === 'click' ? `Chcę kliknąć „${name}”` : `Chcę wpisać tekst w pole „${name}”`) + (category === 'consent' ? ' w oknie zgody na pliki cookie' : '') + (context ? ', ' + context : '') + '. Potwierdzasz? Powiedz tak albo nie.';
@@ -66,17 +67,17 @@ export function confirmPrompt(kind: 'click' | 'fill', name: string, category: Co
 export function clickPre(name: string): string { return `Klikam ${name}.`; }
 export function fillPre(name: string): string { return `Wpisuję w pole ${name}.`; }
 export function noChange(kind: 'click' | 'fill', name: string): string { return `${kind === 'click' ? `Kliknąłem ${name}` : `Wpisałem tekst w pole ${name}`}, ale na stronie nic się nie zmieniło.`; }
-export function effectFallback(kind: 'click' | 'fill', name: string): string { return `${kind === 'click' ? `Kliknąłem ${name}` : `Wpisałem tekst w pole ${name}`}. Strona się zmieniła, ale nie udało mi się jej opisać.`; }
+export function effectFallback(kind: 'click' | 'fill', name: string): string { return `${kind === 'click' ? `Kliknąłem ${name}` : `Wpisałem tekst w pole ${name}`}. Strona się zmieniła, ale nie udało mi się jej opisać. Powiedz „co tu jest”, żeby ją opisać.`; }
 const REJECTIONS: Record<RejectReason, string> = {
   not_found: 'Nie znalazłem tego elementu na stronie. Powiedz polecenie jeszcze raz.',
   stale: 'Nie znalazłem tego elementu na stronie. Powiedz polecenie jeszcze raz.',
-  hidden: 'Ten element jest teraz niewidoczny, więc go nie użyję.',
-  disabled: 'Ten element jest teraz nieaktywny, więc go nie użyję.',
-  role_mismatch: 'Tego elementu nie da się tak użyć.',
+  hidden: 'Ten element jest teraz niewidoczny, więc go nie użyję. Zapytaj, co tu jest, albo wybierz inny element.',
+  disabled: 'Ten element jest teraz nieaktywny, więc go nie użyję. Zapytaj, co tu jest, albo wybierz inny element.',
+  role_mismatch: 'Tego elementu nie da się tak użyć. Zapytaj, co możesz zrobić.',
   sensitive_fill: 'Tego pola nie wypełniam, bo jest na dane poufne. Wypełnij je samodzielnie albo poproś o pomoc zaufaną osobę.',
   empty_text: 'Nie usłyszałem, co mam wpisać. Powiedz polecenie jeszcze raz.',
-  too_long: 'Ten tekst jest za długi dla tego pola.',
-  unknown_action: 'Nie umiem jeszcze tego zrobić.',
+  too_long: 'Ten tekst jest za długi dla tego pola. Powiedz krótszy tekst.',
+  unknown_action: 'Nie umiem jeszcze tego zrobić. Zapytaj, co mogę zrobić.',
   needs_confirmation: NEEDS_CONFIRMATION,
   irreversible: NEEDS_CONFIRMATION,
   unconfirmed: ACTION_FAILED,
@@ -134,4 +135,29 @@ export function scrollSpeech(direction: ScrollDirection, r: { outcome: ScrollOut
   if (direction === 'top') return 'Wróciłem na początek strony.';
   if (direction === 'down') return 'Przewinąłem w dół.' + (r.after >= r.max - 1 ? ' To koniec strony.' : '');
   return 'Przewinąłem w górę.' + (r.after <= 0 ? ' To początek strony.' : '');
+}
+export const ASSISTANT_TIMEOUT = 'Asystent odpowiada za wolno. Spróbuj jeszcze raz za chwilę.';
+export const ASSISTANT_INVALID = 'Nie zrozumiałem odpowiedzi asystenta. Powiedz polecenie jeszcze raz.';
+export const NETWORK_FAILED = 'Nie mogę połączyć się z serwerem. Sprawdź internet i spróbuj jeszcze raz.';
+export const NOT_CONFIGURED = 'Usługa głosowa nie jest skonfigurowana. Poproś o pomoc osobę, która zainstalowała wtyczkę.';
+export const STT_TIMEOUT = 'Rozpoznawanie mowy trwa za długo. Spróbuj jeszcze raz za chwilę.';
+export const STT_INVALID = 'Usługa rozpoznawania mowy odpowiedziała błędnie. Spróbuj jeszcze raz.';
+export const NOT_RECORDING = 'Nagranie nie powiodło się. Naciśnij skrót i spróbuj jeszcze raz.';
+export const MIC_FAILED = 'Nie udało się uruchomić mikrofonu. Zamknij inne programy, które go używają, i spróbuj jeszcze raz.';
+export const STORAGE_FAILED = 'Nie udało się zapisać stanu rozmowy. Spróbuj jeszcze raz.';
+export const PIPELINE_FAILED = 'Coś poszło nie tak. Spróbuj jeszcze raz.';
+// One fixed sentence per typed category; raw provider text, exception text, URLs and page content are never interpolated.
+export const STT_FAILURES: Record<SttErrorCode, string> = { stt_failed: STT_FAILED, stt_timeout: STT_TIMEOUT, stt_invalid: STT_INVALID, not_configured: NOT_CONFIGURED, network: NETWORK_FAILED, not_recording: NOT_RECORDING };
+export const MIC_FAILURES: Record<MicErrorCode, string> = { not_allowed: MIC_DENIED, no_device: MIC_NO_DEVICE, other: MIC_FAILED };
+export type FailureSeam = 'assistant' | 'explore' | 'actions';
+const SEAM_DEFAULT: Record<FailureSeam, string> = { assistant: ASSISTANT_FAILED, explore: EXPLORE_FAILED, actions: ACTIONS_FAILED };
+export function failureText(kind: FailureKind, seam: FailureSeam): string {
+  switch (kind) {
+    case 'blocked': return SNAPSHOT_FAILED;
+    case 'timeout': return ASSISTANT_TIMEOUT;
+    case 'network': return NETWORK_FAILED;
+    case 'not_configured': return NOT_CONFIGURED;
+    case 'invalid_output': return seam === 'assistant' ? ASSISTANT_INVALID : SEAM_DEFAULT[seam];
+    default: return SEAM_DEFAULT[seam];
+  }
 }

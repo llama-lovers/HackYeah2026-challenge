@@ -40,7 +40,7 @@ export async function run(ctx) {
   try {
     offset = (await ctx.liveLog(page)).length;
     await ctx.speak(page, 'wpisz 123456789012345678901234 w pole numeru przesyłki');
-    await ctx.waitForLive(page, log => log.slice(offset).includes('Wpisałem tekst w pole Wpisz numer przesyłki. Strona się zmieniła, ale nie udało mi się jej opisać.'));
+    await ctx.waitForLive(page, log => log.slice(offset).includes('Wpisałem tekst w pole Wpisz numer przesyłki. Strona się zmieniła, ale nie udało mi się jej opisać. Powiedz „co tu jest”, żeby ją opisać.'));
     await ctx.waitIdle();
   } finally { await ctx.swEval('globalThis.fetch = __realFetch; delete globalThis.__realFetch;'); }
 }

@@ -1,4 +1,5 @@
-import type { FromOffscreenBody, ToOffscreen, TranscribeResponse } from '../shared/protocol.ts';
+import type { FromOffscreenBody, ToOffscreen } from '../shared/protocol.ts';
+import { decodeTranscriptBody, sttCodeForStatus } from '../shared/protocol.ts';
 import { downsample, encodeWav16 } from '../shared/wav.ts';
 import { RECORDING_CAP_MS } from '../shared/limits.ts';
 // One capture per turn. Every event it emits carries its turn id, and a capture of an older turn is discarded
@@ -29,15 +30,17 @@ function discard(c: Capture) {
 }
 async function upload(c: Capture, blob: Blob) {
   if (blob.size < 1000) { await emit(c, { type: 'TRANSCRIPT', text: '' }); return; }
+  let response: Response;
   try {
-    const response = await fetch(__PROXY_URL__ + '/api/transcribe' + (__E2E__ && c.stubText !== undefined ? '?text=' + encodeURIComponent(c.stubText) : ''), {
+    response = await fetch(__PROXY_URL__ + '/api/transcribe' + (__E2E__ && c.stubText !== undefined ? '?text=' + encodeURIComponent(c.stubText) : ''), {
       method: 'POST', body: blob, headers: { 'Content-Type': blob.type }, signal: AbortSignal.any([c.abort.signal, AbortSignal.timeout(25000)]),
     });
-    if (!response.ok) { await emit(c, { type: 'TRANSCRIBE_ERROR', code: [502, 504].includes(response.status) ? 'stt_failed' : 'network' }); return; }
-    const body = await response.json() as TranscribeResponse;
-    if (typeof body.text !== 'string') throw new Error('invalid_transcript');
-    await emit(c, { type: 'TRANSCRIPT', text: body.text });
-  } catch { await emit(c, { type: 'TRANSCRIBE_ERROR', code: 'network' }); }
+  } catch (error) { await emit(c, { type: 'TRANSCRIBE_ERROR', code: error instanceof DOMException && error.name === 'TimeoutError' ? 'stt_timeout' : 'network' }); return; }
+  if (!response.ok) { await emit(c, { type: 'TRANSCRIBE_ERROR', code: sttCodeForStatus(response.status) }); return; }
+  // An empty transcript is a legitimate "nothing heard"; a body that does not decode (or is absurdly long) is a provider fault.
+  let text: string | null;
+  try { text = decodeTranscriptBody(await response.json()); } catch { text = null; }
+  await emit(c, text === null ? { type: 'TRANSCRIBE_ERROR', code: 'stt_invalid' } : { type: 'TRANSCRIPT', text });
 }
 async function transcribe(c: Capture, blob: Blob) {
   c.state = 'uploading';
@@ -90,7 +93,7 @@ async function start(turnId: string) {
     recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
     recorder.onerror = () => {
       c.failed = true;
-      void emit(c, { type: 'TRANSCRIBE_ERROR', code: 'stt_failed' });
+      void emit(c, { type: 'TRANSCRIBE_ERROR', code: 'not_recording' });
       discard(c);
     };
     recorder.onstart = () => { c.state = 'recording'; void emit(c, { type: 'MIC_OPEN' }); c.timer = setTimeout(() => stop(c), RECORDING_CAP_MS); if (c.stopRequested) stop(c); };

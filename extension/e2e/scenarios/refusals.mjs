@@ -9,11 +9,11 @@ export async function run(ctx) {
   assert.equal(await page.evaluate("document.querySelector('.track-parcel').textContent"), '');
   assert.equal(await page.evaluate("document.querySelector('#typingErrorMsgContainer').textContent"), '');
   await ctx.speak(page, 'kliknij Dalej');
-  await ctx.waitForLive(page, 'Ten element jest teraz nieaktywny, więc go nie użyję.');
+  await ctx.waitForLive(page, 'Ten element jest teraz nieaktywny, więc go nie użyję. Zapytaj, co tu jest, albo wybierz inny element.');
   await ctx.waitIdle();
   const before = await page.evaluate("document.querySelector('#ShipmentNumber').value");
   await ctx.speak(page, 'wpisz 123 w przycisk Znajdź');
-  await ctx.waitForLive(page, 'Tego elementu nie da się tak użyć.');
+  await ctx.waitForLive(page, 'Tego elementu nie da się tak użyć. Zapytaj, co możesz zrobić.');
   await ctx.waitIdle();
   assert(!(await ctx.liveLog(page)).some(s => s.startsWith('Wpisuję')));
   assert.equal(await page.evaluate("document.querySelector('#ShipmentNumber').value"), before);

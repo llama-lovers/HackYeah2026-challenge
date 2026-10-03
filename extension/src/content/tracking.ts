@@ -25,7 +25,8 @@ export function readParcelStatus(doc: Document, digits: string): ParcelStatus | 
 function eligibleText(root: Document | Element, selector: string): string {
   for (const el of root.querySelectorAll(selector)) {
     if (!isElementVisible(el)) continue;
-    const text = collapse(visibleText(el));
+    // Quote the page's text without introducing spaces around inline markup.
+    const text = collapse(visibleText(el, true));
     if (text) return text;
   }
   return '';

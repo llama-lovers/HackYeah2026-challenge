@@ -124,14 +124,14 @@ function sensitive(el: Element): boolean {
   return isSensitiveField({ tag: tagOf(el), type: getAttr(el, 'type') ?? '', autocomplete: getAttr(el, 'autocomplete') ?? '',
     name: getAttr(el, 'name') ?? '', id: idOf(el), label: nativeLabel(el), placeholder: getAttr(el, 'placeholder') ?? '', ariaLabel: computeName(el) });
 }
-export function visibleText(el: Element): string {
+export function visibleText(el: Element, preserveWhitespace = false): string {
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tagOf(el))) return '';
   const parts: string[] = [];
   for (const child of el.childNodes) {
     if (child.nodeType === Node.TEXT_NODE) parts.push(child.textContent ?? '');
-    else if (child instanceof Element && !SKIP.has(tagOf(child)) && !subtreeExcluded(child) && getComputedStyle(child).visibility !== 'hidden') parts.push(visibleText(child));
+    else if (child instanceof Element && !SKIP.has(tagOf(child)) && !subtreeExcluded(child) && getComputedStyle(child).visibility !== 'hidden') parts.push(visibleText(child, preserveWhitespace));
   }
-  return collapse(parts.join(' '));
+  return preserveWhitespace ? parts.join('') : collapse(parts.join(' '));
 }
 function states(el: Element): SnapState {
   const state: SnapState = {};

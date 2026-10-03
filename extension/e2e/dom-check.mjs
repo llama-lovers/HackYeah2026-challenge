@@ -221,6 +221,11 @@ try {
   console.log('PASS dom-check: nested shadow CMP and outer cookie dialogs require informed confirmation');
   const captchaBundle = await bundleForPage(`import {detectCaptcha,waitForParcelStatus,readParcelStatus} from './src/content/tracking.ts'; import {statusSpeech} from './src/shared/messages.pl.ts';globalThis.__captchaTest={detectCaptcha,waitForParcelStatus,readParcelStatus,statusSpeech};`, EXT_DIR);
   await page.goto(server.origin + '/fixtures/tracking-form.html'); await page.evaluate(captchaBundle);
+  const inlineQuote = await page.evaluate(`(() => {
+    document.body.innerHTML='<div class="parcel-wrapper" data-tracking="12345678"><div class="parcelStatusInfo"><div class="status"><h2>W drodze</h2></div><div class="description">Śledź ją w <a href="#mapa">aplikacji InPost Mobile</a>. Numer: 44051401359. <span>Dwa </span><span>słowa.</span><span hidden>Nie cytuj.</span></div></div></div>';
+    return __captchaTest.readParcelStatus(document,'12345678');
+  })()`);
+  assert.deepEqual(inlineQuote,{kind:'status',title:'W drodze',description:'Śledź ją w aplikacji InPost Mobile. Numer: 44051401359. Dwa słowa.'});
   for (const exclusion of ['hidden', 'inert', 'aria-hidden="true"', 'style="display:none"', 'style="visibility:hidden"', 'style="opacity:0"']) {
     const status = await page.evaluate(`(() => {
       document.body.innerHTML='<div ${exclusion}><div class="parcel-wrapper" data-tracking="12345678"><div class="parcelStatusInfo"><div class="status"><h2>Stary ukryty status</h2></div></div></div></div><div class="parcel-wrapper" data-tracking="12345678"><div class="parcelStatusInfo"><div class="status"><h2>Aktualny widoczny status</h2></div><div class="description">Numer 12345678<span hidden>ukryta treść</span> jest w drodze.</div></div></div>';

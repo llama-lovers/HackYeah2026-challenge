@@ -56,3 +56,42 @@ def test_word_window_matches_reference_tolerance():
     result = {"text": "przed po daleko", "words": [
         {"word": "przed", "end": 0.3}, {"word": "po", "end": 2.05}, {"word": "daleko", "end": 2.2}]}
     assert postprocess_transcript(result, RANGES) == "przed po"
+
+
+@pytest.mark.parametrize("number", [
+    "789-01234", "789 -01234", "789- 01234", "789 - 01234",
+    "789\u201001234", "789\u201101234", "789\u201201234", "789 \u2013 01234", "789 \u2014 01234",
+    "789 - 01 - 234",
+])
+def test_merges_hyphenated_digit_groups(number):
+    result = {"text": f"Wpisz {number} w pole numeru przesyłki."}
+    assert postprocess_transcript(result, RANGES) == "Wpisz 78901234 w pole numeru przesyłki."
+
+
+@pytest.mark.parametrize("structure", ["words", "segment_words", "segments", "top_level_words"])
+def test_merges_numbers_across_tokens_and_segments(structure):
+    parts = ["Wpisz", "789", "-", "01234", "w pole."]
+    words = [{"word": part, "start": 0.5 + i * 0.2, "end": 0.7 + i * 0.2}
+             for i, part in enumerate(parts)]
+    result = {"text": "Wpisz 789 -01234 w pole."}
+    if structure == "words":
+        result["words"] = words
+    elif structure == "segment_words":
+        result["segments"] = [{"text": result["text"], "words": words}]
+    elif structure == "segments":
+        result["segments"] = [{"text": part} for part in parts]
+    else:
+        result["segments"] = [{"text": result["text"], "start": 0.5, "end": 2}]
+        result["words"] = words
+    assert postprocess_transcript(result, RANGES) == "Wpisz 78901234 w pole."
+
+
+def test_number_merging_preserves_other_text_and_leading_zeros():
+    result = {"text": "polsko-angielski -12 dwadzieścia trzy 789 01234 ABC-123 001 - 002."}
+    assert postprocess_transcript(result, RANGES) == "polsko-angielski -12 dwadzieścia trzy 789 01234 ABC-123 001002."
+
+
+def test_number_merging_does_not_restore_filtered_words():
+    result = {"text": "789 -01234", "words": [
+        {"word": "789", "end": 1}, {"word": "-01234", "end": 5}]}
+    assert postprocess_transcript(result, RANGES) == "789"

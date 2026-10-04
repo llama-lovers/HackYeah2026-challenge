@@ -2,6 +2,7 @@
 
 import logging
 import math
+import re
 
 from app.stt import TranscriptionError
 
@@ -11,6 +12,12 @@ LANGUAGE_NAMES = dict(zip(
     ("en", "de", "pl", "cs", "sk", "lt", "uk"),
 ))
 logger = logging.getLogger("voice_agent.stt")
+NUMBER_HYPHEN = re.compile(r"(?<=\d)\s*[-\u2010-\u2014]\s*(?=\d)")
+
+
+def _merge_hyphenated_numbers(text):
+    # Join digit groups after assembling tokens, including spaces added by _join.
+    return NUMBER_HYPHEN.sub("", text)
 
 
 def _number(value):
@@ -57,9 +64,9 @@ def postprocess_transcript(result: dict, speech_ranges: tuple[tuple[float, float
     words = result.get("words")
     if segments is None:
         if isinstance(words, list):
-            return _filter_words(words, speech_ranges)
+            return _merge_hyphenated_numbers(_filter_words(words, speech_ranges))
         logger.info("STT response has no segments or word timestamps; quality filters unavailable")
-        return result["text"].strip()
+        return _merge_hyphenated_numbers(result["text"].strip())
     if not isinstance(segments, list):
         raise TranscriptionError("provider_error")
     texts = []
@@ -82,4 +89,4 @@ def postprocess_transcript(result: dict, speech_ranges: tuple[tuple[float, float
             texts.append(_filter_words(segment_words, speech_ranges))
         else:
             texts.append(segment["text"])
-    return _join(texts)
+    return _merge_hyphenated_numbers(_join(texts))

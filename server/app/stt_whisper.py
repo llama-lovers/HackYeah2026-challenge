@@ -19,7 +19,7 @@ from app.config import SERVER_DIR
 from app.audio_processing import prepare_audio
 from app.transcript_processing import postprocess_transcript
 
-DEFAULT_MODEL = "openai/whisper-large-v3-turbo"
+DEFAULT_MODEL = "openai/whisper-large-v3"
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 TIMEOUT_S = 10.0
 FORMATS = {"audio/webm": "webm", "audio/ogg": "ogg", "audio/wav": "wav", "audio/wave": "wav", "audio/x-wav": "wav"}

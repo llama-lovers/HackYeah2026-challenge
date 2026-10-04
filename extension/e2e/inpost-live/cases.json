@@ -1,0 +1,9 @@
+[
+  {"id":"silence","text":"","expected":"Brak zmian formularza i komunikat o braku mowy."},
+  {"id":"missing-button","text":"Kliknij przycisk Fioletowy Jednorożec.","expected":"Brak kliknięcia i nawigacji; komunikat o braku elementu."},
+  {"id":"invalid-parcel","text":"Śledź paczkę numer jeden dwa trzy.","expected":"Odrzucenie numeru długości 3; formularz bez zmian."},
+  {"id":"fill-parcel","text":"Wpisz siedem osiem dziewięć zero jeden dwa trzy cztery w pole numeru przesyłki.","expected":"Pole numeru przesyłki zawiera 78901234; brak wysłania formularza."},
+  {"id":"search-navigation","text":"Kliknij Szukaj.","expected":"Przejście do wyszukiwarki lub otwarcie widocznego pola wyszukiwania."},
+  {"id":"pricing-navigation","text":"Kliknij Cennik.","expected":"Przejście na stronę cennika InPost."},
+  {"id":"fill-parcel-24","text":"Wpisz jeden dwa trzy cztery pięć sześć siedem osiem dziewięć zero jeden dwa trzy cztery pięć sześć siedem osiem dziewięć zero jeden dwa trzy cztery w pole numeru przesyłki.","expected":"Pole zawiera dokładnie 123456789012345678901234 (24 cyfry); formularz nie jest wysyłany."}
+]

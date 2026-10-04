@@ -55,6 +55,13 @@ test('complete spoken stop is local while substring dictation reaches the model'
   await pipeline.runCommand('dictation', 7, 'wpisz stop w pole');
   assert.equal(requests, 1);
 });
+test('default output failure stores fixed recovery and never switches to browser speech', async () => {
+  tabHandler = () => { throw new Error('removed content'); };
+  await pipeline.announce(7, 'Untrusted page text');
+  assert.deepEqual(spoken, []);
+  assert.equal(store.get('outputRecovery'), 'page_access');
+  assert(!JSON.stringify([...store]).includes('Untrusted page text'));
+});
 beforeEach(() => { pipeline.forgetWorkerMemory(); store.clear(); localStore.clear(); localFault.read = false; localFault.write = false; localFault.writes = 0; sent.length = 0; spoken.length = 0; tabCalls.length = 0; injected.length = 0; tabHandler = () => ({ ok: true }); injectHandler = () => [{ result: undefined }]; });
 
 test('rapid shortcut presses start then stop one recording and keep its owner (CR-05)', async () => {

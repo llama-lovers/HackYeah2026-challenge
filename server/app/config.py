@@ -61,6 +61,7 @@ class Settings:
     extension_id: str | None = None
     allowed_hosts: tuple[str, ...] = ("localhost", "127.0.0.1")
     warmup_on_start: bool = False
+    tts_base_url: str = "http://127.0.0.1:7001"
 
     @classmethod
     def from_env(cls, environ=os.environ):
@@ -84,4 +85,5 @@ class Settings:
             extension_id=resolve_extension_id(environ, SERVER_DIR.parent / "extension" / "static" / "manifest.json"),
             allowed_hosts=tuple(dict.fromkeys(("localhost", "127.0.0.1", *[h.strip() for h in value("ALLOWED_HOSTS", "").split(",") if h.strip()]))),
             warmup_on_start=value("WARMUP_ON_START", "").casefold() in {"1", "true"},
+            tts_base_url=value("TTS_BASE_URL", cls.tts_base_url),
         )

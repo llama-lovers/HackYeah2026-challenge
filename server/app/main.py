@@ -6,7 +6,7 @@ import logging
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.cors import CORSMiddleware
@@ -21,6 +21,7 @@ from app.exploration import EXPLORATION_SCHEMA, ExplorationRequest, build_explor
 from app.openrouter import UpstreamError, chat_json, warm_up
 from app.prompts import build_action_messages, build_effect_messages
 from app.schemas import ACTION_SCHEMA, EFFECT_SCHEMA, ActionProposal, ActionRequest, EffectRequest, EffectSummary
+from app.speech import SpeechRequest, synthesize
 
 
 def create_app(settings: Settings | None = None,
@@ -43,8 +44,11 @@ def create_app(settings: Settings | None = None,
         else:
             logger.warning("EXTENSION_ID unresolved: all browser origins will be rejected")
         async with httpx.AsyncClient(base_url=settings.openrouter_base_url.rstrip("/") + "/",
-                                    timeout=settings.openrouter_timeout_s, transport=transport) as client:
+                                    timeout=settings.openrouter_timeout_s, transport=transport) as client, \
+                   httpx.AsyncClient(base_url=settings.tts_base_url.rstrip("/") + "/",
+                                     timeout=15.0, transport=transport, follow_redirects=False) as tts_client:
             app.state.http = client
+            app.state.tts = tts_client
             if settings.warmup_on_start and settings.openrouter_api_key:
                 for name, result in (await warm_up(client, settings)).items():
                     logger.info("warmup %s -> %s", name, result)
@@ -67,6 +71,16 @@ def create_app(settings: Settings | None = None,
     @app.get("/health")
     async def health():
         return {"ok": True}
+
+    @app.post("/api/speak")
+    async def speak(body: SpeechRequest):
+        try:
+            audio = await synthesize(app.state.tts, body.text)
+            return Response(audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})
+        except httpx.TimeoutException:
+            return JSONResponse({"error": "tts_timeout"}, status_code=504)
+        except (httpx.HTTPError, ValueError):
+            return JSONResponse({"error": "tts_unavailable"}, status_code=502)
 
     @app.post("/api/action")
     async def action(body: ActionRequest):

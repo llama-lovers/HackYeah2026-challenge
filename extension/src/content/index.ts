@@ -10,10 +10,16 @@ import { projectCandidates, recheckCandidates } from './candidates.ts';
 import { scrollDocument } from './scroll.ts';
 import { decodeScrollRequest } from '../shared/protocol.ts';
 import { SCROLL_PRE } from '../shared/messages.pl.ts';
+import { getSpeechOutput } from '../shared/speech.ts';
 const globals = globalThis as typeof globalThis & { __voiceAgentInitialized?: boolean };
 if (!globals.__voiceAgentInitialized) {
   globals.__voiceAgentInitialized = true;
-  const announcer = createAnnouncer(document);
+  const live = createAnnouncer(document);
+  const announcer = { host: live.host, async announce(text: string): Promise<void> {
+    if (await getSpeechOutput() !== 'piper') return live.announce(text);
+    const result = await chrome.runtime.sendMessage({ target: 'sw', type: 'SPEAK', text });
+    if (result?.cancelled === true) throw new Error('speech_cancelled');
+  } };
   chrome.runtime.onMessage.addListener((message: ToContent, sender, respond) => {
     if (sender.id !== chrome.runtime.id) return;
     switch (message.type) {

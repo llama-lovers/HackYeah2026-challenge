@@ -13,6 +13,7 @@ let tabHandler: Handler = () => ({ ok: true });
 const injected: any[] = [];
 let injectHandler: (opts: any) => unknown = () => [{ result: undefined }];
 const g = globalThis as any;
+let runtimeReply: unknown;
 g.__PROXY_URL__ = 'http://localhost:8787'; g.__E2E__ = false;
 g.chrome = {
   storage: { session: {
@@ -23,10 +24,10 @@ g.chrome = {
     get: async (key: string) => { if (localFault.read) throw new Error('storage read failed'); return localStore.has(key) ? { [key]: structuredClone(localStore.get(key)) } : {}; },
     set: async (items: Record<string, unknown>) => { if (localFault.write) throw new Error('quota exceeded'); localFault.writes++; for (const [k, v] of Object.entries(items)) localStore.set(k, structuredClone(v)); },
   } },
-  runtime: { id: 'ext', sendMessage: async (message: any) => { sent.push(message); }, getContexts: async () => [{}], ContextType: { OFFSCREEN_DOCUMENT: 'OFFSCREEN_DOCUMENT' }, openOptionsPage: async () => {} },
+  runtime: { id: 'ext', sendMessage: async (message: any) => { sent.push(message); return runtimeReply; }, getContexts: async () => [{}], ContextType: { OFFSCREEN_DOCUMENT: 'OFFSCREEN_DOCUMENT' }, openOptionsPage: async () => {} },
   offscreen: { createDocument: async () => {}, Reason: { USER_MEDIA: 'USER_MEDIA' } },
   tabs: { sendMessage: async (tabId: number, message: any) => { tabCalls.push({ tabId, message }); return tabHandler(tabId, message); } },
-  tts: { speak: (text: string) => { spoken.push(text); } },
+  tts: { speak: (text: string, options?: { onEvent?: (event: { type: string }) => void }) => { spoken.push(text); options?.onEvent?.({ type: 'end' }); } },
   scripting: { executeScript: async (opts: any) => { injected.push(opts); return injectHandler(opts); } },
 };
 const pipeline = await import('./pipeline.ts');
@@ -34,7 +35,89 @@ const messages = await import('../shared/messages.pl.ts');
 const msgs = () => messages;
 const msg_ = (name: keyof typeof messages) => messages[name] as string;
 const turn = () => pipeline.getTurn() as Promise<any>;
-beforeEach(() => { store.clear(); localStore.clear(); localFault.read = false; localFault.write = false; localFault.writes = 0; sent.length = 0; spoken.length = 0; tabCalls.length = 0; injected.length = 0; tabHandler = () => ({ ok: true }); injectHandler = () => [{ result: undefined }]; });
+beforeEach(() => { runtimeReply = undefined; store.clear(); localStore.clear(); localFault.read = false; localFault.write = false; localFault.writes = 0; sent.length = 0; spoken.length = 0; tabCalls.length = 0; injected.length = 0; tabHandler = () => ({ ok: true }); injectHandler = () => [{ result: undefined }]; });
+
+test('Piper delivers an announcement without duplicate ARIA speech and preserves repeat', async () => {
+  localStore.set('speechOutput', 'piper'); runtimeReply = { ok: true };
+  tabHandler = () => ({ ok: true, docId: 'doc-1' });
+  await pipeline.announce(7, 'Aktualna treść strony.');
+  assert.deepEqual(sent.filter(m => m.type === 'SPEECH_PLAY').map(m => m.text), ['Aktualna treść strony.']);
+  assert.equal(tabCalls.filter(c => c.message.type === 'ANNOUNCE').length, 0);
+  assert.equal((store.get('lastResponse') as any).text, 'Aktualna treść strony.');
+  assert.deepEqual(spoken, []);
+});
+
+test('Piper failure speaks a browser fallback while cancellation stays silent', async () => {
+  localStore.set('speechOutput', 'piper'); runtimeReply = { ok: false };
+  await pipeline.announce(undefined, 'Opis strony.');
+  assert.equal(spoken.length, 1); assert(spoken[0]!.includes('Opis strony.'));
+  spoken.length = 0; runtimeReply = { ok: false, cancelled: true };
+  await pipeline.announce(undefined, 'Stary opis.');
+  assert.deepEqual(spoken, []);
+});
+
+test('Piper output is stopped and listening cue finishes before microphone opens', async () => {
+  localStore.set('speechOutput', 'piper'); runtimeReply = { ok: true };
+  await pipeline.handleToggle({ id: 7, url: 'https://example.com/' } as chrome.tabs.Tab);
+  assert.deepEqual(sent.map(m => m.type), ['SPEECH_STOP', 'SPEECH_PLAY', 'REC_START']);
+  const id = (await turn()).id;
+  await pipeline.handleOffscreenMessage({ target: 'sw', turnId: id, type: 'MIC_OPEN' });
+  assert.equal(sent.filter(m => m.type === 'SPEECH_PLAY').length, 1);
+});
+
+test('late Piper errors after interruption cannot start fallback speech over a new recording', async () => {
+  localStore.set('speechOutput', 'piper');
+  const original = g.chrome.runtime.sendMessage;
+  let fail!: () => void;
+  g.chrome.runtime.sendMessage = async (message: any) => {
+    sent.push(message);
+    if (message.type === 'SPEECH_PLAY' && message.text === 'Stary opis.') return new Promise((_, reject) => { fail = () => reject(new Error('closed port')); });
+    return { ok: true };
+  };
+  try {
+    const old = pipeline.announce(undefined, 'Stary opis.');
+    while (!fail) await new Promise<void>(resolve => setImmediate(resolve));
+    await pipeline.handleToggle({ id: 7, url: 'https://example.com/' } as chrome.tabs.Tab);
+    fail(); await old;
+    assert.equal((await turn()).phase, 'recording');
+    assert.deepEqual(spoken, []);
+  } finally { g.chrome.runtime.sendMessage = original; }
+});
+
+test('microphone waits for the browser fallback when Piper is unavailable', async () => {
+  localStore.set('speechOutput', 'piper'); runtimeReply = { ok: false };
+  const original = g.chrome.tts.speak;
+  let finish!: () => void;
+  g.chrome.tts.speak = (_: string, options: any) => { finish = () => options.onEvent({ type: 'end' }); };
+  try {
+    const recording = pipeline.handleToggle({ id: 7, url: 'https://example.com/' } as chrome.tabs.Tab);
+    while (!finish) await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(sent.some(m => m.type === 'REC_START'), false);
+    finish(); await recording;
+    assert.equal(sent.some(m => m.type === 'REC_START'), true);
+  } finally { g.chrome.tts.speak = original; }
+});
+
+test('browser fallback finishes before another Piper announcement can play', async () => {
+  localStore.set('speechOutput', 'piper');
+  const runtime = g.chrome.runtime.sendMessage, tts = g.chrome.tts.speak;
+  let finish!: () => void;
+  g.chrome.runtime.sendMessage = async (message: any) => {
+    sent.push(message);
+    return { ok: message.text !== 'First.' };
+  };
+  g.chrome.tts.speak = (_: string, options: any) => { finish = () => options.onEvent({ type: 'end' }); };
+  try {
+    const first = pipeline.announce(undefined, 'First.');
+    while (!finish) await new Promise<void>(resolve => setImmediate(resolve));
+    const second = pipeline.announce(undefined, 'Second.');
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const before = sent.filter(m => m.type === 'SPEECH_PLAY').map(m => m.text);
+    finish(); await Promise.all([first, second]);
+    assert.deepEqual(before, ['First.']);
+    assert.deepEqual(sent.filter(m => m.type === 'SPEECH_PLAY').map(m => m.text), ['First.', 'Second.']);
+  } finally { g.chrome.runtime.sendMessage = runtime; g.chrome.tts.speak = tts; }
+});
 
 test('rapid shortcut presses start then stop one recording and keep its owner (CR-05)', async () => {
   await Promise.all([pipeline.handleToggle({ id: 7, url: 'https://example.com/' } as chrome.tabs.Tab), pipeline.handleToggle({ id: 22, url: 'https://example.com/' } as chrome.tabs.Tab)]);

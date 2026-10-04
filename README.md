@@ -1,6 +1,6 @@
 # FastEcho
 
-FastEcho is a general-purpose Chrome extension that helps blind and visually impaired users interact with websites through Polish voice commands. Built for HackYeah 2026, it can describe a page, suggest available actions, click controls, fill ordinary form fields, scroll, and report the observed result through the user's screen reader.
+FastEcho is a general-purpose Chrome extension that helps blind and visually impaired users interact with websites through Polish voice commands. Built for HackYeah 2026, it can describe a page, suggest available actions, click controls, fill ordinary form fields, scroll, and report the observed result through a screen reader or a local Piper voice.
 
 The core browsing workflow works with the active website's DOM and accessible labels. The repository includes local HTML fixtures for repeatable demonstrations and tests. User-facing commands and announcements are in Polish; this documentation is in English.
 
@@ -10,7 +10,7 @@ The core browsing workflow works with the active website's DOM and accessible la
 - **Page exploration:** ask what is on the page or what actions are available.
 - **Validated browser actions:** model proposals are checked against the current page before execution.
 - **Result feedback:** compare page state before and after an action and announce the observed change.
-- **Accessible output:** announcements use an ARIA live region, with Chrome TTS as a fallback when page messaging is unavailable.
+- **Selectable spoken output:** use your screen reader through an ARIA live region or let local Piper read FastEcho's responses. Chrome TTS provides fallback speech when Piper is unavailable.
 - **Conversation controls:** repeat the last response, adjust response detail, and answer clarification or confirmation questions.
 - **Sensitive-field protection:** mask recognized sensitive data in page snapshots and refuse actions on protected fields or CAPTCHA controls.
 
@@ -22,7 +22,7 @@ flowchart TD
 
     subgraph Browser["Chrome extension — Manifest V3"]
         Worker["Background service worker\nTurn management and orchestration"]
-        Offscreen["Offscreen document\nMicrophone capture: WebM or WAV"]
+        Offscreen["Offscreen document\nMicrophone capture and Piper audio playback"]
         Content["Content script\nDOM snapshots, masking, validation, execution"]
         Feedback["ARIA live region\nScreen reader announcements"]
         TTS["Chrome TTS fallback"]
@@ -33,6 +33,7 @@ flowchart TD
     subgraph Backend["Local FastAPI proxy — localhost:8787"]
         Transcribe["POST /api/transcribe\nFFmpeg and Silero VAD, or STT stub"]
         Reasoning["POST /api/action\nPOST /api/explore\nPOST /api/effect"]
+        Speech["POST /api/speak\nLocal speech proxy"]
     end
 
     subgraph Cloud["OpenRouter"]
@@ -42,6 +43,11 @@ flowchart TD
 
     User -->|"Alt+Shift+A"| Worker
     Worker -->|"Start / stop recording"| Offscreen
+    Worker -->|"Piper announcements"| Offscreen
+    Offscreen -->|"Text to synthesize"| Speech
+    Speech <-->|"Text / WAV audio"| Piper["Local Piper service\nlocalhost:7001"]
+    Speech -->|"WAV audio"| Offscreen
+    Offscreen -->|"Spoken response"| User
     Offscreen -->|"Audio upload"| Transcribe
     Transcribe <-->|"Real transcription mode"| STT
     Transcribe -->|"Transcript via offscreen document"| Worker
@@ -49,8 +55,9 @@ flowchart TD
     Content <-->|"Read DOM / execute validated action"| Page
     Worker <-->|"Masked text and bounded page context"| Reasoning
     Reasoning <-->|"Server-side API key"| Chat
-    Worker -->|"Announcement"| Feedback
-    Content -->|"Pre-action announcement"| Feedback
+    Worker -->|"Screen reader mode"| Feedback
+    Content -->|"Pre-action announcement: screen reader mode"| Feedback
+    Content -->|"Pre-action announcement: Piper mode"| Worker
     Feedback --> User
     Worker --> TTS
     TTS --> User
@@ -66,7 +73,7 @@ The model proposes an action; the extension controls whether it can execute. It 
 extension/
   src/background/       Service worker, API client, and command pipeline
   src/content/          Page snapshots, action execution, and ARIA feedback
-  src/offscreen/        Microphone recording and transcription upload
+  src/offscreen/        Microphone recording, transcription upload, speech playback
   src/options/          Microphone permission and shortcut settings
   src/shared/           Protocols, masking, validation, and Polish commands
   static/               Manifest and HTML templates
@@ -77,6 +84,7 @@ server/
   tests/                Backend tests and a fake OpenRouter server
   .env.example          Backend configuration template
 live_stt/               Independent WebSocket ASR service and Docker setup
+live_tts/               Local Piper speech synthesis service and voice setup
 tests/                  Test plans and reports
 CLAUDE.md               Project goals and team guidelines
 ```
@@ -90,7 +98,7 @@ For the extension and main backend:
 - Python **3.12 or newer** and `uv`.
 - **FFmpeg** on `PATH` for real audio transcription.
 - An **OpenRouter API key** with access to the configured chat and transcription models for the full voice workflow.
-- A microphone and a screen reader with ARIA live-region support, such as NVDA or VoiceOver, for spoken feedback on supported pages.
+- A microphone, plus either a screen reader with ARIA live-region support (such as NVDA or VoiceOver) or the optional local Piper service below for spoken feedback.
 
 The main backend runs Silero VAD locally on CPU; it does not require a GPU. Docker is only needed if you choose the optional containerized `live_stt` service.
 
@@ -149,7 +157,8 @@ The build generates `extension/dist/` and uses `http://localhost:8787` as the pr
 2. Choose **Load unpacked** and select `extension/dist/`.
 3. The extension's options page opens on first installation. Choose **Włącz mikrofon** (Enable microphone) and allow microphone access.
 4. Check the assigned shortcut at `chrome://extensions/shortcuts`; the default is `Alt+Shift+A`.
-5. Enable your screen reader, open an ordinary HTTP(S) website, and issue a voice command. You can also use the local demo below.
+5. In extension options, choose **Czytnik ekranu** (Screen reader) or **Piper – lokalny głos FastEcho** and choose **Zapisz wybór głosu** (Save voice choice). Screen reader mode is the default. For Piper, follow [Local Piper voice](#local-piper-voice) and use **Przetestuj głos Pipera** (Test Piper voice).
+6. Open an ordinary HTTP(S) website and issue a voice command. You can also use the local demo below.
 
 After changing extension code or build settings, rebuild and reload the extension in `chrome://extensions`. Reload the website too so it receives the updated content script.
 
@@ -206,6 +215,7 @@ Restart the backend after changing settings. Stub mode returns the configured te
 | `EXTENSION_ID` | Derived from the key in `extension/static/manifest.json` unless explicitly set. |
 | `ALLOWED_HOSTS` | Additional comma-separated hosts; `localhost` and `127.0.0.1` are always included. |
 | `WARMUP_ON_START` | Disabled; `1` or `true` enables startup warm-up requests when a key is configured. |
+| `TTS_BASE_URL` | `http://127.0.0.1:7001`; local Piper service used by `/api/speak`. |
 
 Real transcription decodes audio with FFmpeg, detects speech with Silero VAD, and sends processed mono 16 kHz WAV audio to OpenRouter. Despite the name `STT_MODE=whisper`, `STT_MODEL` may select another compatible transcription model.
 
@@ -229,6 +239,7 @@ For PowerShell, set `$env:PROXY_URL` and `$env:AUDIO_FORMAT` before running `npm
 | --- | --- | --- |
 | `GET` | `/health` | Local service health check. |
 | `POST` | `/api/transcribe` | Accept an audio body with an `audio/*` content type and return `{"text":"..."}`. |
+| `POST` | `/api/speak` | Accept `{"text":"..."}` and return mono PCM16 WAV audio from the local Piper service. No OpenRouter key is needed for local synthesis. |
 | `POST` | `/api/action` | Propose a structured action from an utterance and page snapshot. |
 | `POST` | `/api/explore` | Generate a page summary or select available action candidates. |
 | `POST` | `/api/effect` | Summarize an executed action and observed page diff. |
@@ -274,6 +285,117 @@ The E2E runner builds into `dist-e2e/`, launches an isolated browser with a fake
 
 See [the test report](tests/REPORT.md) for test scope and recorded results.
 
+## Local Piper voice
+
+Piper reads FastEcho's descriptions, action announcements, confirmations, and results without requiring a screen reader. Speech synthesis runs locally on CPU. The main backend forwards text to the Piper service, and the extension plays its WAV response in an offscreen document.
+
+### 1. Prepare Piper once
+
+From the repository root:
+
+```sh
+cd live_tts
+uv sync --locked
+cp config.env.example config.env
+```
+
+If `config.env` already exists, retain your settings. For local use, set:
+
+```dotenv
+TTS_BACKEND=local
+TTS_HOST=127.0.0.1
+TTS_PORT=7001
+TTS_LOCAL_VOICE=pl_PL-mc_speech-medium
+```
+
+This service uses its own Python 3.12 environment; `uv` installs the interpreter if needed. The first setup downloads the Polish voice. Voice files and local configuration are ignored by Git.
+
+After saving `config.env`, download the voice from `live_tts/`:
+
+```sh
+uv run --locked scripts/download_model.py
+```
+
+### 2. Start both services
+
+Keep these processes running in **two separate terminals**. Each command block starts from the repository root.
+
+**Terminal 1 — Piper:**
+
+```sh
+cd live_tts
+uv run --locked run.py
+```
+
+**Terminal 2 — main FastAPI backend:**
+
+```sh
+cd server
+uv run --locked uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8787 --no-access-log
+```
+
+Prepare `server/.env` and install backend dependencies as described in [Quick start](#quick-start). The backend uses `TTS_BASE_URL=http://127.0.0.1:7001` by default. If Piper runs on another address or port, set `TTS_BASE_URL` in `server/.env` and restart the backend.
+
+| Component | Default address | Role |
+| --- | --- | --- |
+| Main backend | `http://localhost:8787` | Transcription, page reasoning, and forwarding speech requests. |
+| Piper | `http://127.0.0.1:7001` | Local text-to-speech synthesis. |
+| Chrome extension | Loaded from `extension/dist/` | Microphone input, browser actions, and audio playback. |
+
+Local Piper synthesis requires no API key. Speech recognition in `STT_MODE=whisper` and model-backed page features still require OpenRouter configuration. Piper generates the spoken response; it does not transcribe microphone input or inspect the page.
+
+### 3. Enable Piper in Chrome
+
+In a third terminal, build the extension from the repository root:
+
+```sh
+cd extension
+npm ci
+npm run build
+```
+
+1. Open `chrome://extensions`. Load `extension/dist/` as an unpacked extension, or reload the existing FastEcho extension.
+2. Open FastEcho's **Extension options**.
+3. Choose **Piper – lokalny głos FastEcho** under **Głos odpowiedzi** (Response voice).
+4. Click **Zapisz wybór głosu** (Save voice choice).
+5. Click **Przetestuj głos Pipera** (Test Piper voice). You should hear a Polish greeting, followed by the status **Test głosu zakończony.** (Voice test completed).
+6. Grant microphone access with **Włącz mikrofon** if needed, then reload the website you want to use.
+7. Press `Alt+Shift+A`, say **Co tu jest?**, and press `Alt+Shift+A` again to submit the command. FastEcho will speak the page summary using Piper.
+
+The selected output mode persists between browser sessions. On subsequent starts, launch the two services and use the extension; dependency installation and voice download are only needed during setup or updates. Stop either local service with `Ctrl+C` in its terminal.
+
+### 4. Verify the setup
+
+From another terminal, check both services:
+
+```sh
+curl http://localhost:8787/health
+curl http://127.0.0.1:7001/health
+```
+
+The main backend should return `{"ok":true}`. Piper should report `"ready": true`, `"backend": "local"`, and the configured voice. Neither health check verifies OpenRouter credentials.
+
+To test the backend-to-Piper connection directly and save a WAV file:
+
+```sh
+curl --fail http://localhost:8787/api/speak \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"Dzień dobry. Tu FastEcho."}' \
+  -o fastecho-voice-test.wav
+```
+
+On Windows PowerShell, use `curl.exe` for these curl commands and place the synthesis command on one line. Play the resulting WAV with your audio player; delete it after testing if no longer needed.
+
+Spoken messages are queued. The shortcut interrupts playback before a new recording, and the listening cue finishes before the microphone opens. Piper mode does not also send the same messages to the page's ARIA live region. If synthesis or playback fails, FastEcho announces the failure and uses Chrome TTS; Chrome must have a working speech voice for this fallback to be audible.
+
+Run the Piper service tests from `live_tts/`:
+
+```sh
+uv run --locked pytest -q
+```
+
+Detailed voice settings and the standalone streaming API are documented in [live_tts/README.md](live_tts/README.md). The extension currently uses completed WAV responses rather than the streaming endpoint.
+
 ## Optional WebSocket ASR service
 
 `live_stt/` can serve other audio clients independently of the Chrome extension. Its API uses Python **3.14.7**; the local NeMo worker uses a separate Python **3.13.15** environment. The launcher requires `uv >= 0.12.19` and Docker with Linux containers.
@@ -298,7 +420,8 @@ Detailed configuration, protocol, and runtime requirements are documented in [li
 | --- | --- |
 | Shortcut does nothing | Check `chrome://extensions/shortcuts` for conflicts or an unassigned command. |
 | Microphone cannot start | Open extension options, grant microphone access, and check OS microphone permissions. |
-| No spoken response on the page | Enable your screen reader and its live-region announcements. Chrome TTS is used when page messaging fails. |
+| No spoken response on the page | Check the selected voice in extension options. In screen reader mode, enable your reader and its live-region announcements. In Piper mode, run the voice test. |
+| Piper is unavailable | Check `http://127.0.0.1:7001/health`, the main backend, `TTS_BASE_URL`, and the downloaded voice files. |
 | Every recording produces the same command | Set `STT_MODE=whisper` instead of `stub` and restart the backend. |
 | Backend reports `no_api_key` | Set `OPENROUTER_API_KEY` in `server/.env` and restart. |
 | Real transcription fails | Check FFmpeg on `PATH`, API credentials, model access, and backend logs. |

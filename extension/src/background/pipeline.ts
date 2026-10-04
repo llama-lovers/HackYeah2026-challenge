@@ -22,21 +22,15 @@ import { parseExploreCommand, decodeSummary, decodeActions, decodeRecheck, ACTIO
 import { toModelText, spokenName } from '../shared/snapshot-format.ts';
 import * as msg from '../shared/messages.pl.ts';
 import { postJson, classifyFailure } from './proxy.ts';
-let creating: Promise<void> | undefined;
+import { ensureOffscreen } from './offscreen.ts';
+import { speakPiper, stopSpeech } from './speech.ts';
+import { getSpeechOutput } from '../shared/speech.ts';
+export { ensureOffscreen } from './offscreen.ts';
 export async function getTurn(): Promise<TurnState> {
   return (await chrome.storage.session.get(SESSION_KEYS.turn))[SESSION_KEYS.turn] as TurnState | undefined ?? { phase: 'idle', startedAt: Date.now() };
 }
 export async function setTurn(turn: TurnState): Promise<void> { await chrome.storage.session.set({ [SESSION_KEYS.turn]: turn }); }
 export async function resetTurn(): Promise<void> { clearWaits(); await setTurn({ phase: 'idle', startedAt: Date.now() }); }
-export async function ensureOffscreen(): Promise<void> {
-  if (creating) return creating;
-  creating = (async () => {
-    if (!(await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] })).length) {
-      await chrome.offscreen.createDocument({ url: 'offscreen/offscreen.html', reasons: [chrome.offscreen.Reason.USER_MEDIA], justification: 'Nagrywanie polecenia głosowego po naciśnięciu skrótu' });
-    }
-  })();
-  try { await creating; } finally { creating = undefined; }
-}
 export async function ping(tabId: number): Promise<boolean> {
   try { return (await chrome.tabs.sendMessage(tabId, { type: 'PING' }, { frameId: 0 })).ok === true; } catch { return false; }
 }
@@ -66,6 +60,14 @@ export function speakTts(text: string): void { chrome.tts.speak(text, { lang: 'p
 // Every spoken line carries an intent. Only 'substantive' lines that the page acknowledged as written become the replay buffer.
 export async function announce(tabId: number | undefined, text: string, intent: OutputIntent = 'substantive'): Promise<void> {
   if (!text.trim()) return;
+  if (await getSpeechOutput() === 'piper') {
+    const result = await speakPiper(text);
+    if (result.ok && tabId !== undefined && savesForReplay(intent)) {
+      try { await rememberDelivered(tabId, text, await chrome.tabs.sendMessage(tabId, { type: 'PING' }, { frameId: 0 })); }
+      catch { /* Speech succeeded, but there is no page to bind replay to. */ }
+    }
+    return;
+  }
   let ack: unknown;
   try {
     if (tabId === undefined) throw new Error('no_tab');
@@ -162,7 +164,12 @@ export function rehydrateWait(): Promise<void> { return runSerial(async () => { 
 // Simulates the loss of everything in worker memory (a killed worker) for tests; stored state is untouched.
 export function forgetWorkerMemory(): void { clearWaits(); }
 export async function resetTurnIf(id: string | undefined): Promise<void> { if ((await getTurn()).id === id) await resetTurn(); }
-export function handleToggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promise<void> { return runSerial(() => toggle(tab, opts)).catch(() => { speakTts(msg.STORAGE_FAILED); }); }
+export async function handleToggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promise<void> {
+  try {
+    if (await getSpeechOutput() === 'piper') await stopSpeech();
+    await runSerial(() => toggle(tab, opts));
+  } catch { speakTts(msg.STORAGE_FAILED); }
+}
 async function toggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promise<void> {
   if (tab.id === undefined) return;
   const state = await getTurn();
@@ -175,7 +182,11 @@ async function toggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promi
     // Reserve the recording owner before any asynchronous setup; failures only release this reservation.
     await setTurn(next);
     if (!(await preparePageAccess(tab))) { await resetTurnIf(next.id); return; }
-    try { await ensureOffscreen(); await chrome.runtime.sendMessage({ target: 'offscreen', type: 'REC_START', turnId: next.id }); }
+    try {
+      await ensureOffscreen();
+      if (await getSpeechOutput() === 'piper') await speakPiper(msg.LISTENING);
+      await chrome.runtime.sendMessage({ target: 'offscreen', type: 'REC_START', turnId: next.id });
+    }
     catch { await announce(tab.id, msg.MIC_FAILED, 'status'); await resetTurnIf(next.id); }
   } else {
     await setTurn(next); armWait(next);
@@ -203,7 +214,9 @@ async function onOffscreen(message: FromOffscreen): Promise<(() => Promise<void>
   // After a worker restart the in-memory timer is gone; any event of the owning turn restores it from the stored deadline.
   armWait(turn);
   switch (message.type) {
-    case 'MIC_OPEN': await announce(turn.tabId, msg.LISTENING, 'status'); break;
+    case 'MIC_OPEN':
+      if (await getSpeechOutput() !== 'piper') await announce(turn.tabId, msg.LISTENING, 'status');
+      break;
     case 'REC_STOPPED':
       // Autonomous stop (recording cap): the deadline starts here, before STT finishes; a user stop already started it.
       if (turn.phase === 'recording') { const next = toProcessing(turn, Date.now()); await setTurn(next); armWait(next); }

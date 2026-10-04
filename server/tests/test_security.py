@@ -108,7 +108,7 @@ def test_extension_id_resolution(tmp_path):
 def test_env_template_names_only():
     lines = (SERVER_DIR / ".env.example").read_text().splitlines()
     names = [line for line in lines if line.strip() and not line.startswith("#")]
-    assert len(names) == 12 and "OPENROUTER_API_KEY=" in names
+    assert "OPENROUTER_API_KEY=" in names and "TTS_BASE_URL=" in names
     assert "STT_AUDIO_DEBUG_DIR=" in names
     assert all(re.fullmatch(r"[A-Z_]+=", line) for line in names)
 

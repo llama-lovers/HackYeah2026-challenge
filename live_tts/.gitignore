@@ -1,0 +1,12 @@
+.venv/
+.cache/
+artifacts/
+config.env
+models/*
+!models/.gitkeep
+__pycache__/
+.pytest_cache/
+*.wav
+*.pcm
+# ONNX Runtime local telemetry session artefact
+:memory:.ses

@@ -2,6 +2,10 @@ import type { FromOffscreenBody, ToOffscreen } from '../shared/protocol.ts';
 import { decodeTranscriptBody, sttCodeForStatus } from '../shared/protocol.ts';
 import { downsample, encodeWav16 } from '../shared/wav.ts';
 import { RECORDING_CAP_MS } from '../shared/limits.ts';
+import { SpeechPlayer } from './speech-player.ts';
+import { synthesizeSpeech, playSpeech } from './speech-audio.ts';
+import { isSpeechText } from '../shared/speech.ts';
+const speech = new SpeechPlayer(synthesizeSpeech, playSpeech);
 // One capture per turn. Every event it emits carries its turn id, and a capture of an older turn is discarded
 // (microphone released, upload aborted, no further events) as soon as a different turn starts.
 interface Capture {
@@ -68,6 +72,7 @@ function stop(c: Capture) {
 }
 async function start(turnId: string) {
   if (current?.turnId === turnId) return;
+  speech.stop();
   if (current) discard(current);
   const c: Capture = { turnId, state: 'opening', discarded: false, stopRequested: false, failed: false, abort: new AbortController(), wavChunks: [] };
   current = c;
@@ -111,8 +116,16 @@ async function start(turnId: string) {
     await emit(c, { type: 'MIC_ERROR', code: ['NotAllowedError', 'SecurityError'].includes(name) ? 'not_allowed' : name === 'NotFoundError' ? 'no_device' : 'other' });
   }
 }
-chrome.runtime.onMessage.addListener((message: ToOffscreen, sender) => {
+chrome.runtime.onMessage.addListener((message: ToOffscreen, sender, respond) => {
   if (sender.id !== chrome.runtime.id || message.target !== 'offscreen') return;
+  if (message.type === 'SPEECH_STOP') { speech.stop(); respond({ ok: true }); return; }
+  if (message.type === 'SPEECH_PLAY') {
+    if (!isSpeechText(message.text)) { respond({ ok: false }); return; }
+    // Never play through the speakers while the microphone is opening or recording.
+    if (current && current.state !== 'uploading') { respond({ ok: false, cancelled: true }); return; }
+    void speech.speak(message.text).then(respond, () => respond({ ok: false }));
+    return true;
+  }
   if (message.type === 'REC_START') void start(message.turnId);
   else if (message.type === 'REC_STOP') {
     const c = current;

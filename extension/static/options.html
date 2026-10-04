@@ -1,12 +1,22 @@
 <!doctype html>
 <html lang="pl">
-<head><meta charset="utf-8"><title>Głosowy agent – ustawienia</title></head>
+<head><meta charset="utf-8"><title>FastEcho – ustawienia</title></head>
 <body>
   <main>
-    <h1>Głosowy agent</h1>
+    <h1>FastEcho</h1>
     <p>Aby wydawać polecenia głosem, wtyczka potrzebuje jednorazowego dostępu do mikrofonu.</p>
     <button type="button" id="grant-mic" autofocus>Włącz mikrofon</button>
     <p id="mic-status" role="status" aria-live="polite"></p>
+    <h2>Głos odpowiedzi</h2>
+    <label for="speech-output">Sposób odczytywania komunikatów</label>
+    <select id="speech-output" aria-describedby="speech-help">
+      <option value="screen_reader">Czytnik ekranu (np. NVDA lub VoiceOver)</option>
+      <option value="piper">Piper – lokalny głos FastEcho</option>
+    </select>
+    <p id="speech-help">Piper odczytuje odpowiedzi bez czytnika ekranu. Uruchom lokalny serwis głosu, zapisz wybór i wykonaj test. Przy niedostępnym Piperze używany jest głos przeglądarki.</p>
+    <button type="button" id="save-speech">Zapisz wybór głosu</button>
+    <button type="button" id="test-speech" disabled>Przetestuj głos Pipera</button>
+    <p id="speech-status" role="status" aria-live="polite"></p>
     <h2>Skrót klawiszowy</h2>
     <p id="shortcut-info" role="status"></p>
   </main>

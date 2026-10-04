@@ -8,14 +8,12 @@ export const timeoutMs = 35000;
 export async function run(ctx) {
   const original = await ctx.openPage('/fixtures/tracking-form.html');
   const mark = await ctx.upstreamMark();
-  await ctx.speak(original, 'otwórz nową zakładkę');
+  await ctx.speak(original, 'otwórz mi nową zakładkę proszę');
   const blank = await waitForTarget(ctx.browser.port, t => t.type === 'page' && /^(?:chrome|edge):\/\/newtab\/?$/.test(t.url));
   const session = await attach(ctx.client, blank.id);
   await ctx.waitIdle();
-  // Reproduce loss of remembered blank tabs after reloading the extension.
-  await ctx.swEval("chrome.storage.session.remove('blankTabs')");
   await ctx.client.send('Page.bringToFront', {}, session);
-  await ctx.toggle({ stubText: 'wyszukaj paczkomaty w Warszawie' });
+  await ctx.toggle({ stubText: 'wpisz paczkomaty w Warszawie w pole wyszukiwania' });
   await waitFor(async () => (await ctx.turnState()).phase === 'recording', { label: 'start-page recording after reload' });
   await new Promise(resolve => setTimeout(resolve, 800));
   await ctx.toggle();

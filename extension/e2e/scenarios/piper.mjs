@@ -16,7 +16,10 @@ export async function run(ctx) {
   await waitFor(() => options("document.querySelector('#speech-status').textContent === 'Ustawienia głosu zapisane.'"));
   assert.equal(await ctx.swEval("chrome.storage.local.get('speechOutput').then(items=>items.speechOutput)"), 'piper');
 
-  await ctx.swEval(`chrome.offscreen.createDocument({url:'offscreen/offscreen.html',reasons:['USER_MEDIA','AUDIO_PLAYBACK'],justification:'Test speech playback'})`);
+  await ctx.swEval(`(async () => {
+    if (!(await chrome.runtime.getContexts({contextTypes:['OFFSCREEN_DOCUMENT']})).length)
+      await chrome.offscreen.createDocument({url:'offscreen/offscreen.html',reasons:['USER_MEDIA','AUDIO_PLAYBACK'],justification:'Test speech playback'});
+  })()`);
   const target = await waitForTarget(ctx.browser.port, t => t.url.endsWith('/offscreen/offscreen.html'));
   const session = await attach(ctx.client, target.id);
   const offscreen = expr => evaluate(ctx.client, session, expr);

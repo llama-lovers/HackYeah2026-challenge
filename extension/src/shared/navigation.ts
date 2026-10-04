@@ -1,4 +1,5 @@
 // Browser navigation is derived only from the user's complete command, never page text.
+import { browserCommandText } from './browser-command.ts';
 export type NavigationCommand = { kind: 'navigate' | 'new_tab'; url: string } | { kind: 'new_tab' } | { kind: 'invalid_url' };
 const OPEN = '(?:otw[oó]rz|przejd[zź]|wejd[zź]|id[zź])';
 const NEW_TAB = '(?:now[aą] (?:kart[eę]|zak[lł]adk[eę]))';
@@ -25,7 +26,7 @@ export function normalizeNavigationUrl(address: string): string | null {
 }
 
 export function parseNavigationCommand(text: string): NavigationCommand | null {
-  const source = text.trim();
+  const source = browserCommandText(text).replace(/\s+prosz[eę]\s*[.!?]?$/iu, '').replace(/[.!?]+$/u, '');
   const prefix = PREFIX.exec(source);
   if (!prefix) return null;
   let address = source.slice(prefix[0].length);

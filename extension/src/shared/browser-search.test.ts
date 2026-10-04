@@ -47,3 +47,13 @@ test('recognizes browser start-page variants only', () => {
   for (const url of ['chrome://newtab/', 'chrome://new-tab-page/', 'edge://newtab/', 'chrome-search://local-ntp/local-ntp.html']) assert.equal(isBrowserStartPage(url), true, url);
   for (const url of ['chrome://settings', 'chrome://version', 'https://google.com', undefined]) assert.equal(isBrowserStartPage(url), false, String(url));
 });
+
+test('natural searches and a new-tab search do not need an injectable DOM', () => {
+  for (const text of ['Możesz wyszukać koty', 'wyszukaj mi proszę koty', 'Czy możesz mi wyszukać koty']) {
+    assert.deepEqual(parseBrowserSearch(text), { query: 'koty', newTab: false, addressBar: false }, text);
+  }
+  assert.deepEqual(parseBrowserSearch('otwórz mi nową kartę i wyszukaj koty'), { query: 'koty', newTab: true, addressBar: false });
+  assert.equal(parseBrowserSearch('wpisz koty'), null);
+  assert.deepEqual(parseBrowserSearch('wpisz koty', true), { query: 'koty', newTab: false, addressBar: false });
+  assert.deepEqual(parseBrowserSearch('znajdź koty', true), { query: 'koty', newTab: false, addressBar: false });
+});

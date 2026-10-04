@@ -24,6 +24,7 @@ import { parseExploreCommand, decodeSummary, decodeActions, decodeRecheck, ACTIO
 import { toModelText, spokenName } from '../shared/snapshot-format.ts';
 import * as msg from '../shared/messages.pl.ts';
 import { postJson, classifyFailure } from './proxy.ts';
+import { readActionHistory, rememberAction } from './history.ts';
 import { ensureOffscreen } from './offscreen.ts';
 import { speakPiper, stopSpeech } from './speech.ts';
 import { getSpeechOutput } from '../shared/speech.ts';
@@ -57,7 +58,10 @@ export function isAccessibleUrl(url?: string): boolean {
 export async function preparePageAccess(tab: chrome.tabs.Tab): Promise<boolean> {
   const tabId = tab.id;
   // The browser start page has no injectable DOM, but can accept a spoken address.
-  if (tabId !== undefined && isBrowserStartPage(tab.url)) return true;
+  if (tabId !== undefined && isBrowserStartPage(tab.url)) {
+    await chrome.storage.session.set({ [SESSION_KEYS.blankTabs]: [...await blankTabs(), tabId].slice(-10) });
+    return true;
+  }
   // After an extension reload Chrome may hide this URL and our blank-tab list is
   // gone. Recording still supports browser commands; page reads/injection are not attempted.
   if (tabId !== undefined && tab.url === undefined) return true;
@@ -280,7 +284,7 @@ async function askPending(run: { turnId: string; tabId: number | undefined }, pe
   if (stored !== 'stale') await speakTurn(run.turnId, run.tabId, stored === 'failed' ? msg.STORAGE_FAILED : prompt, stored === 'failed' ? 'status' : intent);
 }
 export function claimPending(turnId: string): Promise<PendingInteraction | undefined> { return runSerial(async () => { if (!(await ownsTurn(turnId))) return undefined; const p = await getPending(); await chrome.storage.session.remove(SESSION_KEYS.pending); return p; }); }
-export type CommandRun = { turnId: string; tabId: number; signal: AbortSignal; budget: StepBudget };
+export type CommandRun = { turnId: string; tabId: number; signal: AbortSignal; budget: StepBudget; utterance?: string };
 type ProposalStep = { proposal: Proposal; epoch: number; docId: string; preSnapshot: Snapshot; announce: 'model' | 'none' | 'local'; confirmed?: boolean; context?: string; category?: ConfirmCategory };
 export async function performProposal(run: CommandRun, step: ProposalStep): Promise<'done' | 'handoff' | 'stopped'> {
   const { turnId, tabId, signal } = run, { proposal } = step;
@@ -304,7 +308,10 @@ export async function performProposal(run: CommandRun, step: ProposalStep): Prom
   try { executed = await chrome.tabs.sendMessage(tabId, { type: 'EXECUTE', epoch: step.epoch, proposal, turnId, jobId, docId: step.docId, confirmed: step.confirmed, context: step.context }, { frameId: 0 }); }
   catch {
     const job = await getJob();
-    if (jobId && job?.id === jobId && job.state !== 'proposed') return 'handoff';
+    if (jobId && job?.id === jobId && job.state !== 'proposed') {
+      await rememberAction({ utterance: run.utterance ?? '', action: job.action.kind, detail: `${job.action.name}: działanie rozpoczęte; wynik nawigacji jeszcze nieznany.` });
+      return 'handoff';
+    }
     if (jobId) await runSerial(() => dropJob(jobId));
     await say(msg.ACTION_FAILED); return 'stopped';
   }
@@ -317,6 +324,8 @@ export async function performProposal(run: CommandRun, step: ProposalStep): Prom
     return 'stopped';
   }
   if (executed.kind === 'none') { await say(msg.noneSay(proposal.say)); return 'stopped'; }
+  await rememberAction({ utterance: run.utterance ?? '', action: executed.kind,
+    detail: `${executed.name}${executed.kind === 'fill' ? ': ' + proposal.text : ''}. Wykonano działanie; nie oznacza to potwierdzenia wyniku formularza.` });
   if (step.announce === 'model') await announceEffect(tabId, { kind: executed.kind, name: executed.name, role: executed.role }, executed.diff ?? { added: [], removed: [], changed: [], alerts: [] }, signal, turnId);
   else if (step.announce === 'local') await say(msg.localEffect({ kind: executed.kind, name: executed.name, role: executed.role }, executed.diff ?? { added: [], removed: [], changed: [], alerts: [] }, step.category));
   return 'done';
@@ -442,17 +451,23 @@ async function runActions(run: CommandRun): Promise<void> {
 }
 export async function runCommand(turnId: string, tabId: number | undefined, rawText: string): Promise<'handoff' | void> {
   const signal = turnSignal(turnId);
-  const run: CommandRun = { turnId, tabId: tabId!, signal, budget: createBudget() };
+  const run: CommandRun = { turnId, tabId: tabId!, signal, budget: createBudget(), utterance: rawText.trim() };
   const say = (text: string, intent: OutputIntent = 'substantive') => speakTurn(turnId, tabId, text, intent);
   const text = rawText.trim();
   if (!text) { await say(msg.NOTHING_HEARD, 'status'); return; }
   const intent = parseIntent(text);
   if (intent.kind === 'captcha_request') { await say(msg.CAPTCHA_REFUSAL); return; }
   let search = parseBrowserSearch(text);
+  let browserStart = false;
   // Google-specific field commands can submit a search directly. Other websites
   // retain normal field filling; only inspect context when this grammar could match.
   if (!search && tabId !== undefined && parseBrowserSearch(text, true)) {
     try {
+      const tab = await chrome.tabs.get(tabId);
+      browserStart = isBrowserStartPage(tab.url) || (tab.url === undefined && (await blankTabs()).includes(tabId));
+      if (browserStart || isGoogleSearchPage(tab.url)) search = parseBrowserSearch(text, true);
+    } catch { /* A tab can disappear while its command is being transcribed. */ }
+    if (!search) try {
       const page: PingResult = await chrome.tabs.sendMessage(tabId, { type: 'PING' }, { frameId: 0 });
       if (page.ok && isGoogleSearchPage(page.url)) search = parseBrowserSearch(text, true);
     } catch { /* No DOM on browser new-tab pages. Explicit browser searches still work. */ }
@@ -471,6 +486,7 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
         const url = address ?? googleSearchUrl(search.query);
         if (search.newTab) await chrome.tabs.create({ url, active: true, openerTabId: tabId });
         else await chrome.tabs.update(tabId, { url });
+        await rememberAction({ utterance: text, action: 'search', detail: search.query });
         reportBrowserAction(turnId, 'search', 'started');
       });
     } catch { reportBrowserAction(turnId, 'search', 'failed'); await say(msg.NAVIGATION_FAILED); }
@@ -496,6 +512,7 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
         } else {
           await chrome.tabs.update(tabId, { url: navigation.url });
         }
+        await rememberAction({ utterance: text, action: navigation.kind, detail: 'url' in navigation ? navigation.url : 'Otworzono pustą kartę.' });
         reportBrowserAction(turnId, navigation.kind, 'started');
       });
     } catch { reportBrowserAction(turnId, navigation.kind, 'failed'); await say(msg.NAVIGATION_FAILED); }
@@ -552,7 +569,7 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
   let proposal: Proposal | null;
   try {
     const utterance = Array.from(maskText(text)).slice(0, 500).join('');
-    proposal = decodeProposal(await postJson<unknown>('/api/action', { utterance, snapshot: toModelText(result.snapshot) }, 20000, signal));
+    proposal = decodeProposal(await postJson<unknown>('/api/action', { utterance, snapshot: toModelText(result.snapshot), history: await readActionHistory() }, 20000, signal));
   } catch (error) { await say(msg.failureText(classifyFailure(error), 'assistant')); return; }
   if (!(await ownsTurn(turnId))) return;
   // A body that does not decode (empty, wrong types, unknown action) is a failure: nothing is sent to the page.

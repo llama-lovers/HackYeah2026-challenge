@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Głosowy agent",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Głosowy asystent dla osób niewidomych na polskich stronach.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAjYL/mXDa+apUAfRVU329i1BKzPlzYPwQ9EO062Sc+ruvgPlaogz3ZluzKHWUjJyxZ4gKp0jtL7pa48GtaPX+ZsBNr+kUG3DXbehN+Rkz72eFruz1xcOwN56LqJqDxuDMMFnOAqdbOlpUiO32VYlbAP/wWZ1cKQiNxbd9XJCQezep0P93r7sK+U5PbtIdtdNZySc+cxCWQ0WpZDcqZv1YSl3ez/PUNK8erRyxhV+WLPedX0ihcAJeuKKhOyW6iBbJ98DZlM+M7Tg24ywEzE2APpb/rDKlmzC0/LX7h+baFLLLMMx/xzFCDjIY+E+96PCT/sgXntNtMQcLipeQoZTbkwIDAQAB",
   "minimum_chrome_version": "116",

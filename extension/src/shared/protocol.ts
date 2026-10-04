@@ -98,7 +98,7 @@ export function decodeEffect(body: unknown): string | null {
 }
 // Safe failure categories of a proxy/model round trip. Only the category is ever used for speech; bodies and exception text never are.
 export type FailureKind = 'blocked' | 'timeout' | 'network' | 'not_configured' | 'invalid_output' | 'unavailable';
-export interface ActionRequestBody { utterance: string; snapshot: string }
+export interface ActionRequestBody { utterance: string; snapshot: string; history?: { utterance: string; action: 'click' | 'fill' | 'search' | 'navigate' | 'new_tab'; detail: string }[] }
 export interface ExecutedAction { kind: 'click' | 'fill'; name: string; role: string }
 export interface EffectRequestBody { action: ExecutedAction; diff: PageDiff; verbosity?: Verbosity }
 export interface EffectResponse { say: string }

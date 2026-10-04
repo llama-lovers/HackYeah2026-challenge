@@ -41,6 +41,52 @@ const messages = await import('../shared/messages.pl.ts');
 const msgs = () => messages;
 const msg_ = (name: keyof typeof messages) => messages[name] as string;
 const turn = () => pipeline.getTurn() as Promise<any>;
+test('new-tab field search uses browser navigation without trying to snapshot the protected page', async () => {
+  const oldGet = g.chrome.tabs.get;
+  g.chrome.tabs.get = async () => ({ id: 7, url: 'chrome://newtab/' });
+  tabHandler = () => { throw new Error('protected page'); };
+  try {
+    store.set('turn', { phase: 'processing', tabId: 7, startedAt: Date.now(), id: 'start-search' });
+    await pipeline.runCommand('start-search', 7, 'wpisz koty w pole wyszukiwania');
+    assert.equal(browserActions.at(-1)?.options.url, 'https://www.google.com/search?q=koty');
+    assert(!tabCalls.some(call => call.message.type === 'SNAPSHOT'));
+  } finally { g.chrome.tabs.get = oldGet; }
+});
+test('last three completed browser actions reach model across tabs; failed navigation is excluded', async () => {
+  for (const subject of ['koty', 'psy', 'konie', 'ptaki']) {
+    store.set('turn', { phase: 'processing', tabId: 7, startedAt: Date.now(), id: 'history-nav' });
+    await pipeline.runCommand('history-nav', 7, `wyszukaj ${subject}`);
+  }
+  browserFailure = true;
+  await pipeline.runCommand('history-nav', 7, 'przejdź na example.com');
+  browserFailure = false;
+  let body: any;
+  g.fetch = async (url: string, options: any) => {
+    if (String(url).endsWith('/api/action')) {
+      body = JSON.parse(options.body);
+      return { ok: true, json: async () => ({ action: 'none', target: '', text: '', needs_confirmation: false, say: 'Brak wyniku.' }) };
+    }
+    return { ok: true, json: async () => ({ ok: true }) };
+  };
+  tabHandler = (_tab, message) => message.type === 'SNAPSHOT' ? { ok: true, docId: 'other-document', snapshot: { epoch: 1, path: '/', title: 'T', nodes: [], truncated: false } } : { ok: true };
+  store.set('turn', { phase: 'processing', tabId: 8, startedAt: Date.now(), id: 'history-model' });
+  await pipeline.runCommand('history-model', 8, 'kliknij wynik o tym ostatnim');
+  assert.deepEqual(body.history.map((entry: any) => entry.detail), ['psy', 'konie', 'ptaki']);
+  assert.equal(body.history[2].utterance, 'wyszukaj ptaki');
+});
+
+test('successful click is remembered while refused execution is excluded', async () => {
+  store.set('turn', { phase: 'processing', tabId: 7, startedAt: Date.now(), id: 'history-click' });
+  const run = { turnId: 'history-click', tabId: 7, signal: new AbortController().signal, budget: { max: 3, used: 0 }, utterance: 'kliknij Pomoc' };
+  const step = { proposal: { action: 'click' as const, target: 'e1', text: '', needs_confirmation: false, say: '' }, epoch: 1, docId: 'doc', preSnapshot: { epoch: 1, path: '/', title: 'T', nodes: [], truncated: false }, announce: 'none' as const };
+  tabHandler = () => ({ ok: false, reason: 'stale' });
+  await pipeline.performProposal(run, step);
+  assert.equal(store.has('actionHistory'), false);
+  tabHandler = () => ({ ok: true, kind: 'click', name: 'Pomoc', role: 'link' });
+  await pipeline.performProposal(run, step);
+  assert.equal((store.get('actionHistory') as any)[0].utterance, 'kliknij Pomoc');
+  assert.equal((store.get('actionHistory') as any)[0].action, 'click');
+});
 beforeEach(() => { runtimeReply = undefined; store.clear(); localStore.clear(); localFault.read = false; localFault.write = false; localFault.writes = 0; sent.length = 0; spoken.length = 0; tabCalls.length = 0; injected.length = 0; browserActions.length = 0; browserFailure = false; tabHandler = () => ({ ok: true }); injectHandler = () => [{ result: undefined }]; });
 
 test('Piper delivers an announcement without duplicate ARIA speech and preserves repeat', async () => {

@@ -32,9 +32,16 @@ Verbosity = Literal["concise", "standard", "detailed"]
 Speech = Annotated[str, AfterValidator(lambda value: value[:300])]
 
 
+class ActionHistoryEntry(StrictModel):
+    utterance: str = Field(max_length=500)
+    action: Literal["click", "fill", "search", "navigate", "new_tab"]
+    detail: str = Field(max_length=500)
+
+
 class ActionRequest(StrictModel):
     utterance: str = Field(min_length=1, max_length=500)
     snapshot: str = Field(min_length=1, max_length=60000)
+    history: list[ActionHistoryEntry] = Field(default_factory=list, max_length=3)
 
 
 class BrowserActionEvent(StrictModel):

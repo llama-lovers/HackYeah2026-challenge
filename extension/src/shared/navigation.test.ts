@@ -20,6 +20,13 @@ test('page clicks and dictation never become browser navigation', () => {
   }
 });
 
+test('natural requests for a new tab or exact URL do not require a page snapshot', () => {
+  for (const text of ['otwórz mi nową kartę', 'Czy możesz otworzyć nową zakładkę?', 'Chcę otworzyć nową kartę', 'otwórz proszę nową kartę', 'otwórz nową zakładkę proszę']) {
+    assert.deepEqual(parseNavigationCommand(text), { kind: 'new_tab' }, text);
+  }
+  assert.deepEqual(parseNavigationCommand('Proszę, wejdź mi na wikipedia.org.'), { kind: 'navigate', url: 'https://wikipedia.org/' });
+});
+
 test('invalid, ambiguous and privileged URLs do not produce navigation commands', () => {
   for (const address of ['javascript:alert(1)', 'data:text/html,x', 'file:///C:/a', 'chrome://settings', 'https://user:pass@example.com', 'https://example.com\\@evil.com', 'https://example.com\n', 'example.com i usuń kartę', 'http://', 'https://bad_host.com', 'www', 'x'.repeat(2050)]) {
     assert.equal(normalizeNavigationUrl(address), null, address);

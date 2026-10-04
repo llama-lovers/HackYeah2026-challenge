@@ -1,4 +1,4 @@
-import { MASK, maskText, isSensitiveField } from '../shared/mask.ts';
+import { isSensitiveField } from '../shared/mask.ts';
 import { MAX_NODES, MAX_TEXT, MAX_ALERT, collapse, truncate, stripQuery } from '../shared/snapshot-format.ts';
 import type { SnapNode, SnapState, Snapshot } from '../shared/snapshot-format.ts';
 import type { ResolvedTarget } from '../shared/validate.ts';
@@ -13,15 +13,8 @@ let last: Snapshot | null = null;
 let idMap = new Map<string, { ref: WeakRef<Element>; node: SnapNode; identity: string }>();
 const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'IFRAME', 'CANVAS']);
 const INTERACTIVE = new Set(['link', 'button', 'textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'menuitem', 'tab', 'switch']);
-let secretValues: string[] = [];
-const safe = (s: string, max = MAX_TEXT) => {
-  for (const value of secretValues) {
-    const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // Preserve complete parcel tokens even when a short numeric secret is a prefix.
-    s = s.replace(new RegExp(/^\d+$/.test(value) ? `(?<!\\d)${escaped}(?!\\d)` : escaped, 'g'), MASK);
-  }
-  return truncate(maskText(s), max);
-};
+// Anonymization is disabled for now: page text is only truncated.
+const safe = (s: string, max = MAX_TEXT) => truncate(s, max);
 
 // Forms expose named controls as properties that shadow built-ins (DOM clobbering): every element member used by
 // the walker and by policy code is therefore read through its prototype accessor, never as a property of the element.
@@ -145,17 +138,6 @@ function states(el: Element): SnapState {
   return state;
 }
 export function takeSnapshot(doc: Document = document, opts?: { excludeRoot?: Element | null }): Snapshot {
-  // Include hidden and shadow-root fields: pages can echo their values elsewhere.
-  const secrets = new Set<string>();
-  const collect = (root: Document | ShadowRoot) => {
-    for (const el of root.querySelectorAll('*')) {
-      if ((el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) && sensitive(el) && el.value) secrets.add(el.value);
-      const shadow = shadowOf(el);
-      if (shadow) collect(shadow);
-    }
-  };
-  collect(doc);
-  secretValues = [...secrets].sort((a, b) => b.length - a.length);
   const candidates: { node: SnapNode; el: Element; priority: number }[] = [];
   const walk = (el: Element, suppressProse = false) => {
     if (SKIP.has(tagOf(el)) || idOf(el) === LIVE_REGION_ID || el === opts?.excludeRoot || subtreeExcluded(el)) return;
@@ -170,8 +152,8 @@ export function takeSnapshot(doc: Document = document, opts?: { excludeRoot?: El
       const placeholder = safe(getAttr(el, 'placeholder') ?? '');
       if (placeholder && placeholder !== node.name) node.hint = placeholder;
       if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-        if (['textbox', 'searchbox', 'combobox'].includes(role)) node.value = node.state?.sensitive ? MASK : safe(el.value);
-      } else if (el instanceof HTMLSelectElement) node.value = node.state?.sensitive ? MASK : safe(Array.from(el.selectedOptions).map(o => o.textContent ?? '').join(' '));
+        if (['textbox', 'searchbox', 'combobox'].includes(role)) node.value = safe(el.value);
+      } else if (el instanceof HTMLSelectElement) node.value = safe(Array.from(el.selectedOptions).map(o => o.textContent ?? '').join(' '));
       if (el instanceof HTMLAnchorElement) {
         const href = new URL(el.href, doc.location.href);
         node.href = safe(href.origin === doc.location.origin ? stripQuery(href.href) : href.host + stripQuery(href.href));

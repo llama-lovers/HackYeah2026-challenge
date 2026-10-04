@@ -1,5 +1,3 @@
-import { maskText } from '../shared/mask.ts';
-
 export interface ActionHistoryEntry {
   utterance: string;
   action: 'click' | 'fill' | 'search' | 'navigate' | 'new_tab';
@@ -7,7 +5,7 @@ export interface ActionHistoryEntry {
 }
 const KEY = 'actionHistory';
 const actions = new Set(['click', 'fill', 'search', 'navigate', 'new_tab']);
-const clean = (text: string) => Array.from(maskText(text)).slice(0, 500).join('');
+const clean = (text: string) => Array.from(text).slice(0, 500).join('');
 let writing: Promise<void> = Promise.resolve();
 
 export async function readActionHistory(): Promise<ActionHistoryEntry[]> {

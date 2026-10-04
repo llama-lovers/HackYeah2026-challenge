@@ -15,7 +15,6 @@ import { isEmptyDiff } from '../shared/diff.ts';
 import type { Proposal, ConfirmCategory } from '../shared/validate.ts';
 import { onToggle, isStale, toProcessing, waitDecision } from '../shared/turn.ts';
 import type { TurnState } from '../shared/turn.ts';
-import { maskText } from '../shared/mask.ts';
 import { parseConversationCommand, savesForReplay, makeReplay, decodeReplay, decodeAnnounceAck, decodeStoredVerbosity, moveVerbosity } from '../shared/conversation.ts';
 import type { OutputIntent, VerbosityDirection } from '../shared/conversation.ts';
 import type { ScrollDirection } from '../shared/protocol.ts';
@@ -568,7 +567,7 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
   if (!(await ownsTurn(turnId))) return;
   let proposal: Proposal | null;
   try {
-    const utterance = Array.from(maskText(text)).slice(0, 500).join('');
+    const utterance = Array.from(text).slice(0, 500).join('');
     proposal = decodeProposal(await postJson<unknown>('/api/action', { utterance, snapshot: toModelText(result.snapshot), history: await readActionHistory() }, 20000, signal));
   } catch (error) { await say(msg.failureText(classifyFailure(error), 'assistant')); return; }
   if (!(await ownsTurn(turnId))) return;

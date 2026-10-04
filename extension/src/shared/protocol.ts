@@ -52,7 +52,14 @@ export type RecheckResult = { ok: true; candidates: ExplorationCandidate[] } | {
 export type SettleDiffResult = { ok: true; diff: PageDiff } | { ok: false; error: 'snapshot_failed' };
 export type FromContent = { type: 'READY' } | { type: 'EXECUTING'; turnId: string; jobId: string };
 // Every recording command and offscreen event carries the immutable id of the turn that owns it, so late events can be ignored.
-export type ToOffscreen = { target: 'offscreen'; type: 'REC_START'; turnId: string } | { target: 'offscreen'; type: 'REC_STOP'; turnId: string; stubText?: string } | { target: 'offscreen'; type: 'REC_DISCARD'; turnId?: string };
+export const EARCON_KINDS = ['mic_open', 'mic_close', 'working', 'done', 'needs_confirmation'] as const;
+export type EarconKind = typeof EARCON_KINDS[number];
+export type ToOffscreen = { target: 'offscreen'; type: 'REC_START'; turnId: string; generation: number; earconsEnabled: boolean }
+  | { target: 'offscreen'; type: 'REC_STOP'; turnId: string; stubText?: string }
+  | { target: 'offscreen'; type: 'REC_DISCARD'; turnId?: string }
+  | { target: 'offscreen'; type: 'PLAY_EARCON'; turnId: string; generation: number; kind: EarconKind; enabled: boolean }
+  | { target: 'offscreen'; type: 'CANCEL_EARCONS'; generation: number; turnId?: string }
+  | { target: 'offscreen'; type: 'AUDIO_SPEECH'; generation: number; active: boolean };
 // Typed failure categories only: the offscreen document never forwards provider text, exception text or response bodies.
 export const STT_ERROR_CODES = ['stt_failed', 'stt_timeout', 'stt_invalid', 'not_configured', 'network', 'not_recording'] as const;
 export const MIC_ERROR_CODES = ['not_allowed', 'no_device', 'other'] as const;

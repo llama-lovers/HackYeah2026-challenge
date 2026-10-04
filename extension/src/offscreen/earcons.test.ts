@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EARCON_PATTERNS, playEarcon, cancelEarcons } from './earcons.ts';
+import type { EarconKind } from './earcons.ts';
 const contexts: FakeContext[] = [];
 let holdResume: (() => Promise<void>) | undefined;
 class Param { values: number[] = []; setValueAtTime(value: number, _time: number) { this.values.push(value); } linearRampToValueAtTime(value: number, _time: number) { this.values.push(value); } }
@@ -19,7 +20,7 @@ test('five lifecycle cues have distinct bounded contour and rhythm signatures', 
 });
 test('mic cues have distinct finite timelines and disconnect every source on completion', async () => {
   assert.notDeepEqual(EARCON_PATTERNS.mic_open, EARCON_PATTERNS.mic_close);
-  for (const kind of ['mic_open', 'mic_close'] as const) {
+  for (const kind of Object.keys(EARCON_PATTERNS) as EarconKind[]) {
     const played = playEarcon(kind, 'turn'); await tick();
     const context = contexts.at(-1)!;
     assert(context.tones.every(t => t.started && t.ends[0]! > 0 && t.ends[0]! <= 0.305));
@@ -29,14 +30,31 @@ test('mic cues have distinct finite timelines and disconnect every source on com
     assert(context.tones.every(t => t.disconnected)); assert(context.gains.every(g => g.disconnected));
   }
 });
+test('queue is bounded and a never-resolving resume times out without retaining its owner', async () => {
+  holdResume = () => new Promise(() => {});
+  const waiting = Array.from({ length: 6 }, () => playEarcon('working', 'blocked'));
+  assert.equal(await playEarcon('done', 'overflow'), 'failed');
+  cancelEarcons('blocked'); assert.deepEqual(await Promise.all(waiting), Array(6).fill('cancelled'));
+  const timeout = playEarcon('working', 'timeout');
+  assert.equal(await timeout, 'failed');
+  const context = contexts.at(-1)!;
+  assert(context.closed); assert.equal(context.tones.length, 0);
+  holdResume = undefined;
+  const next = playEarcon('done', 'after-timeout'); await tick();
+  assert.notEqual(contexts.at(-1), context);
+  for (const tone of contexts.at(-1)!.tones) tone.onended?.();
+  assert.equal(await next, 'played');
+});
 test('cancel settles playing and queued tones without late resurrection after resume', async () => {
   let resume!: () => void;
   holdResume = () => new Promise(resolve => { resume = resolve; });
   const first = playEarcon('mic_open', 'old'), queued = playEarcon('mic_close', 'old'); await tick();
   const context = contexts.at(-1)!;
   cancelEarcons('old'); assert.equal(await first, 'cancelled'); assert.equal(await queued, 'cancelled');
-  resume(); holdResume = undefined; await tick();
+  holdResume = undefined;
   assert(context.closed); assert.equal(context.tones.length, 0);
   const next = playEarcon('mic_open', 'new'); await tick(); cancelEarcons(); assert.equal(await next, 'cancelled');
+  assert.notEqual(contexts.at(-1), context, 'cancelled resume cannot retain the audio queue');
   assert(contexts.at(-1)!.tones.every(t => t.disconnected));
+  resume(); await tick(); assert.equal(context.tones.length, 0);
 });

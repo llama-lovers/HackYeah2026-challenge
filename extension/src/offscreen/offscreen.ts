@@ -1,5 +1,5 @@
 import type { FromOffscreenBody, ToOffscreen, RecordingCompletion } from '../shared/protocol.ts';
-import { decodeTranscriptBody, sttCodeForStatus } from '../shared/protocol.ts';
+import { decodeTranscriptBody, sttCodeForStatus, EARCON_KINDS } from '../shared/protocol.ts';
 import { downsample, encodeWav16 } from '../shared/wav.ts';
 import { RECORDING_CAP_MS } from '../shared/limits.ts';
 import { createSilenceDetector, SILENCE_SAMPLE_MS } from './silence.ts';
@@ -12,8 +12,19 @@ interface Capture {
   context?: AudioContext; source?: MediaStreamAudioSourceNode; processor?: ScriptProcessorNode; wavChunks: Float32Array[];
   analyser?: AnalyserNode; poller?: ReturnType<typeof setInterval>; opened: boolean; finalized: boolean; reason?: RecordingCompletion;
   releasePromise?: Promise<void>; closeCuePlayed?: boolean;
+  generation: number; earconsEnabled: boolean;
 }
 let current: Capture | undefined;
+let audioGeneration = 0, speechActive = false, cueOwner: string | undefined;
+const cancelledCueOwners = new Set<string>();
+const cueId = (c: Capture) => `${c.generation}:${c.turnId}`;
+async function captureCue(c: Capture, kind: 'mic_open' | 'mic_close'): Promise<boolean> {
+  // Offscreen has runtime only; the worker decodes storage afresh at each boundary.
+  try { const reply = await chrome.runtime.sendMessage({ target: 'sw', type: 'AUDIO_PREFERENCE' }); if (typeof reply?.enabled === 'boolean') c.earconsEnabled = reply.enabled; } catch { /* keep the validated start preference */ }
+  if (!c.earconsEnabled || speechActive || cueOwner !== c.turnId || (kind === 'mic_open' && (c.discarded || c.generation < audioGeneration))) return false;
+  // A released microphone has a new boundary cue, separate from the tones STOP invalidated.
+  return await playEarcon(kind, `${kind === 'mic_close' ? Math.max(c.generation, audioGeneration) : c.generation}:${c.turnId}`) === 'played';
+}
 function mark(c: Capture, type: string, detail?: unknown) { if (__E2E__) { const g = globalThis as typeof globalThis & { __audioEvents?: unknown[] }; const events = g.__audioEvents ??= []; events.push({ turnId: c.turnId, type, detail, at: performance.now() }); if (events.length > 200) events.shift(); } }
 const emit = (c: Capture, body: FromOffscreenBody): Promise<void> => c.discarded ? Promise.resolve() : chrome.runtime.sendMessage({ target: 'sw', turnId: c.turnId, ...body }).then(() => {}, () => {});
 function release(c: Capture): Promise<void> {
@@ -27,10 +38,10 @@ function release(c: Capture): Promise<void> {
   c.stream?.getTracks().forEach(track => track.stop());
   const context = c.context;
   c.source = undefined; c.processor = undefined; c.stream = undefined; c.context = undefined;
-  cancelEarcons(c.turnId);
+  cancelEarcons(cueId(c));
   const closed = context ? context.close().catch(() => {}) : Promise.resolve();
   c.releasePromise = (async () => {
-    if (c.opened) { mark(c, 'mic_close'); c.closeCuePlayed = await playEarcon('mic_close', c.turnId) === 'played'; }
+    if (c.opened) { mark(c, 'mic_close'); c.closeCuePlayed = await captureCue(c, 'mic_close'); }
     await closed;
   })();
   return c.releasePromise;
@@ -90,7 +101,7 @@ async function recordingStarted(c: Capture) {
   if (c.discarded) return;
   c.state = 'recording'; c.opened = true; mark(c, 'mic_open');
   c.timer = setTimeout(() => stop(c, 'cap'), RECORDING_CAP_MS);
-  const cuePlayed = await playEarcon('mic_open', c.turnId) === 'played';
+  const cuePlayed = await captureCue(c, 'mic_open');
   if (c.discarded || c.finalized) return;
   const detector = createSilenceDetector(), samples = new Float32Array(c.analyser!.fftSize);
   c.poller = setInterval(() => {
@@ -102,11 +113,12 @@ async function recordingStarted(c: Capture) {
   await emit(c, { type: 'MIC_OPEN', cuePlayed });
   if (c.stopRequested) stop(c, c.reason);
 }
-async function start(turnId: string) {
+async function start(turnId: string, generation: number, earconsEnabled: boolean) {
   if (current?.turnId === turnId) return;
   if (current) discard(current);
   cancelEarcons();
-  const c: Capture = { turnId, state: 'opening', discarded: false, stopRequested: false, failed: false, opened: false, finalized: false, abort: new AbortController(), wavChunks: [] };
+  audioGeneration = generation; cueOwner = turnId;
+  const c: Capture = { turnId, generation, earconsEnabled, state: 'opening', discarded: false, stopRequested: false, failed: false, opened: false, finalized: false, abort: new AbortController(), wavChunks: [] };
   current = c;
   try {
     c.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
@@ -149,11 +161,28 @@ async function start(turnId: string) {
     await emit(c, { type: 'MIC_ERROR', code: ['NotAllowedError', 'SecurityError'].includes(name) ? 'not_allowed' : name === 'NotFoundError' ? 'no_device' : 'other' });
   }
 }
-chrome.runtime.onMessage.addListener((message: ToOffscreen, sender) => {
-  if (sender.id !== chrome.runtime.id || message.target !== 'offscreen') return;
+chrome.runtime.onMessage.addListener((message: ToOffscreen, sender, respond) => {
+  if (sender.id !== chrome.runtime.id || sender.tab !== undefined || (sender.url && sender.url !== chrome.runtime.getURL('background/sw.js')) || message.target !== 'offscreen') return;
+  if ((message.type === 'PLAY_EARCON' || message.type === 'REC_START') && (typeof message.turnId !== 'string' || !message.turnId || message.turnId.length > 64)) return;
+  if ((message.type === 'CANCEL_EARCONS' || message.type === 'REC_DISCARD') && message.turnId !== undefined && (typeof message.turnId !== 'string' || !message.turnId || message.turnId.length > 64)) return;
+  if (message.type === 'AUDIO_SPEECH' && typeof message.active !== 'boolean') return;
+  if (message.type === 'CANCEL_EARCONS' || message.type === 'AUDIO_SPEECH' || message.type === 'PLAY_EARCON' || message.type === 'REC_START') {
+    if (!Number.isSafeInteger(message.generation) || message.generation < audioGeneration) { respond({ result: 'cancelled' }); return; }
+  }
+  if (message.type === 'CANCEL_EARCONS') {
+    if (message.turnId) { const owner = `${message.generation}:${message.turnId}`; cancelledCueOwners.add(owner); if (cancelledCueOwners.size > 128) cancelledCueOwners.delete(cancelledCueOwners.values().next().value!); cancelEarcons(owner); }
+    else { audioGeneration = message.generation; speechActive = false; cancelEarcons(); }
+    respond({ ok: true }); return;
+  }
+  if (message.type === 'AUDIO_SPEECH') { audioGeneration = message.generation; speechActive = message.active === true; if (speechActive) cancelEarcons(); respond({ ok: true }); return; }
+  if (message.type === 'PLAY_EARCON') {
+    if (!(EARCON_KINDS as readonly unknown[]).includes(message.kind) || message.enabled !== true || speechActive || cancelledCueOwners.has(`${message.generation}:${message.turnId}`) || (cueOwner && cueOwner !== message.turnId)) { respond({ result: 'failed' }); return; }
+    audioGeneration = message.generation; cueOwner = message.turnId;
+    void playEarcon(message.kind, `${message.generation}:${message.turnId}`).then(result => respond({ result })); return true;
+  }
   if (message.type === 'REC_DISCARD') { if (current && (message.turnId === undefined || message.turnId === current.turnId)) discard(current); return; }
   if (typeof message.turnId !== 'string' || !message.turnId || message.turnId.length > 64) return;
-  if (message.type === 'REC_START') void start(message.turnId);
+  if (message.type === 'REC_START') void start(message.turnId, message.generation, message.earconsEnabled === true);
   else if (message.type === 'REC_STOP') {
     const c = current;
     if (c && c.turnId === message.turnId && (c.state === 'opening' || c.state === 'recording')) { if (__E2E__) c.stubText = message.stubText; stop(c); }

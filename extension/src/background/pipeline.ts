@@ -1,4 +1,4 @@
-import { OUTPUT_MODE_KEY, OUTPUT_RECOVERY_KEY, decodeOutputMode } from '../shared/settings.ts';
+import { OUTPUT_MODE_KEY, OUTPUT_RECOVERY_KEY, decodeOutputMode, EARCONS_KEY, decodeEarconsEnabled } from '../shared/settings.ts';
 import type { OutputRecovery } from '../shared/settings.ts';
 import { SESSION_KEYS, VERBOSITY_KEY, PENDING_EFFECT_MAX_AGE_MS, decodeScrollResult, decodeProposal, decodeEffect, decodeOutputRequest } from '../shared/protocol.ts';
 import type { PingResult, FromOffscreen, SnapshotResult, CandidatesResult, ExecuteResult, ExecutedAction, PendingEffectJob, SettleDiffResult, ReadStatusResult } from '../shared/protocol.ts';
@@ -19,16 +19,17 @@ import { maskText } from '../shared/mask.ts';
 import { isStopPhrase, parseConversationCommand, savesForReplay, makeReplay, decodeReplay, decodeAnnounceAck, decodeStoredVerbosity, moveVerbosity } from '../shared/conversation.ts';
 import type { OutputIntent, VerbosityDirection } from '../shared/conversation.ts';
 import type { ScrollDirection } from '../shared/protocol.ts';
-import type { Verbosity } from '../shared/protocol.ts';
+import type { Verbosity, EarconKind } from '../shared/protocol.ts';
 import { parseExploreCommand, decodeSummary, decodeActions, decodeRecheck, ACTION_CAPS } from '../shared/exploration.ts';
 import { toModelText, spokenName } from '../shared/snapshot-format.ts';
 import * as msg from '../shared/messages.pl.ts';
 import { postJson, classifyFailure } from './proxy.ts';
 let creating: Promise<void> | undefined;
-export async function getTurn(): Promise<TurnState> {
-  return (await chrome.storage.session.get(SESSION_KEYS.turn))[SESSION_KEYS.turn] as TurnState | undefined ?? { phase: 'idle', startedAt: Date.now() };
+type AudioTurn = TurnState & { micNotified?: boolean; processingNotified?: boolean; doneNotified?: boolean };
+export async function getTurn(): Promise<AudioTurn> {
+  return (await chrome.storage.session.get(SESSION_KEYS.turn))[SESSION_KEYS.turn] as AudioTurn | undefined ?? { phase: 'idle', startedAt: Date.now() };
 }
-let currentOwner: TurnState | undefined;
+let currentOwner: AudioTurn | undefined;
 const cancelled = new Set<string>();
 let generation = Date.now();
 const outputTabs = new Set<number>();
@@ -37,13 +38,13 @@ function cancelPageOutput(): void {
   for (const tabId of outputTabs) void chrome.tabs.sendMessage(tabId, { type: 'CANCEL_OUTPUT', generation: fence }, { frameId: 0 }).catch(() => {});
   if (currentOwner?.tabId !== undefined && !outputTabs.has(currentOwner.tabId)) void chrome.tabs.sendMessage(currentOwner.tabId, { type: 'CANCEL_OUTPUT', generation: fence }, { frameId: 0 }).catch(() => {});
 }
-export async function setTurn(turn: TurnState): Promise<void> { currentOwner = turn; await chrome.storage.session.set({ [SESSION_KEYS.turn]: turn }); }
-export async function resetTurn(): Promise<void> { clearWaits(); await setTurn({ phase: 'idle', startedAt: Date.now() }); }
+export async function setTurn(turn: AudioTurn): Promise<void> { currentOwner = turn; await chrome.storage.session.set({ [SESSION_KEYS.turn]: turn }); }
+export async function resetTurn(): Promise<void> { clearWaits(); if (currentOwner?.id && (currentOwner.phase === 'processing' || currentOwner.micNotified)) void chrome.runtime.sendMessage({ target: 'offscreen', type: 'CANCEL_EARCONS', generation, turnId: currentOwner.id }).catch(() => {}); await setTurn({ phase: 'idle', startedAt: Date.now() }); }
 export async function ensureOffscreen(): Promise<void> {
   if (creating) return creating;
   creating = (async () => {
     if (!(await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] })).length) {
-      await chrome.offscreen.createDocument({ url: 'offscreen/offscreen.html', reasons: [chrome.offscreen.Reason.USER_MEDIA], justification: 'Nagrywanie polecenia głosowego po naciśnięciu skrótu' });
+      await chrome.offscreen.createDocument({ url: 'offscreen/offscreen.html', reasons: [chrome.offscreen.Reason.USER_MEDIA, chrome.offscreen.Reason.AUDIO_PLAYBACK], justification: 'Nagrywanie polecenia głosowego i krótkie sygnały dźwiękowe' });
     }
   })();
   try { await creating; } finally { creating = undefined; }
@@ -79,6 +80,32 @@ async function recoverOutput(code: OutputRecovery): Promise<void> {
   await chrome.runtime.openOptionsPage().catch(() => {});
 }
 const ttsDeliveries = new Set<(result: 'delivered' | 'cancelled' | 'failed') => void>();
+// One agent-audio lane. TTS holds this lane through its terminal event, never just speak() acceptance.
+let audioLane: Promise<unknown> = Promise.resolve();
+function withAudio<T>(work: () => Promise<T>): Promise<T> { const next = audioLane.then(work, work); audioLane = next.catch(() => {}); return next; }
+export async function getEarconsEnabled(): Promise<boolean> {
+  try { return decodeEarconsEnabled((await chrome.storage.local.get(EARCONS_KEY))[EARCONS_KEY]); } catch { return decodeEarconsEnabled(undefined); }
+}
+function lifecycleMark(turnId: string, kind: EarconKind, route: 'cue' | 'text') {
+  if (__E2E__) { const g = globalThis as typeof globalThis & { __lifecycleEvents?: unknown[] }; const events = g.__lifecycleEvents ??= []; events.push({ turnId, kind, route, generation, at: Date.now() }); if (events.length > 200) events.shift(); }
+}
+export async function sendCue(turnId: string, kind: EarconKind): Promise<'played' | 'failed' | 'cancelled' | 'disabled'> {
+  const cueGeneration = generation;
+  if (!(await getEarconsEnabled())) return 'disabled';
+  return withAudio(async () => {
+    if (cueGeneration !== generation || !(await ownsTurn(turnId))) return 'cancelled';
+    try {
+      await ensureOffscreen();
+      if (cueGeneration !== generation || !(await ownsTurn(turnId))) return 'cancelled';
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const reply = await Promise.race([chrome.runtime.sendMessage({ target: 'offscreen', type: 'PLAY_EARCON', turnId, generation: cueGeneration, kind, enabled: true }), new Promise<undefined>(resolve => { timer = setTimeout(() => resolve(undefined), 1200); })]).finally(() => clearTimeout(timer));
+      if (cueGeneration !== generation || !(await ownsTurn(turnId))) return 'cancelled';
+      if (reply?.result === 'played') { lifecycleMark(turnId, kind, 'cue'); return 'played'; }
+      if (!reply) void chrome.runtime.sendMessage({ target: 'offscreen', type: 'CANCEL_EARCONS', generation: cueGeneration, turnId }).catch(() => {});
+      return reply?.result === 'cancelled' ? 'cancelled' : 'failed';
+    } catch { return 'failed'; }
+  });
+}
 function stopTts(): void {
   chrome.tts.stop();
   for (const settle of ttsDeliveries) settle('cancelled');
@@ -119,7 +146,17 @@ export async function deliverOutput(turnId: string | undefined, tabId: number | 
     if (!(await valid())) return 'cancelled';
     const beforeDoc = tabId === undefined ? undefined : await pageDocId(tabId);
     if (!(await valid())) return 'cancelled';
-    const result = voice ? await ttsLine(text, voice) : 'failed';
+    const result = voice ? await withAudio(async () => {
+      if (!(await valid())) return 'cancelled' as const;
+      try {
+        await ensureOffscreen();
+        if (!(await valid())) return 'cancelled' as const;
+        const gate = await chrome.runtime.sendMessage({ target: 'offscreen', type: 'AUDIO_SPEECH', generation: outputGeneration, active: true });
+        if (gate?.ok !== true || !(await valid())) return 'cancelled' as const;
+        try { return await ttsLine(text, voice!); }
+        finally { await chrome.runtime.sendMessage({ target: 'offscreen', type: 'AUDIO_SPEECH', generation: outputGeneration, active: false }).catch(() => {}); }
+      } catch { return 'failed' as const; }
+    }) : 'failed';
     if (!(await valid()) || result === 'cancelled') return 'cancelled';
     if (result === 'failed') {
       stopTts(); cancelPageOutput();
@@ -186,14 +223,16 @@ export async function getVerbosity(): Promise<Verbosity> {
 }
 export async function announceEffect(tabId: number, action: ExecutedAction, diff: PageDiff, signal?: AbortSignal, turnId?: string): Promise<void> {
   const say = (text: string) => turnId === undefined ? announce(tabId, text) : speakTurn(turnId, tabId, text);
-  if (isEmptyDiff(diff)) { await say(msg.noChange(action.kind, action.name)); return; }
-  let text: string;
+  const success = (text: string) => turnId === undefined ? say(text) : successfulLine(turnId, tabId, text);
+  if (isEmptyDiff(diff)) { await success(msg.noChange(action.kind, action.name)); return; }
+  let text: string, measured = false;
   try {
     const reply = decodeEffect(await postJson<unknown>('/api/effect', { action, diff, verbosity: await getVerbosity() }, 12000, signal));
+    measured = reply !== null && !!speakable(reply).trim();
     text = (reply === null ? '' : speakable(reply).trim()) || msg.effectFallback(action.kind, action.name);
   } catch { text = msg.effectFallback(action.kind, action.name); }
   if (signal?.aborted) return;
-  await say(text);
+  await (measured ? success(text) : say(text));
 }
 // State-changing events (shortcut, offscreen notifications) run one at a time so read-modify-write of the turn cannot interleave.
 // Long work (model calls, page actions) stays outside this queue so urgent stop can invalidate its owner immediately.
@@ -217,6 +256,7 @@ export function handleStop(): Promise<void> {
   stopTts();
   for (const [id, controller] of controllers) { cancelled.add(id); controller.abort(); }
   abortTurn(currentOwner?.id); clearWaits();
+  void chrome.runtime.sendMessage({ target: 'offscreen', type: 'CANCEL_EARCONS', generation }).catch(() => {});
   void chrome.runtime.sendMessage({ target: 'offscreen', type: 'REC_DISCARD' }).catch(() => {});
   return runSerial(async () => {
     const turn = await getTurn(); abortTurn(turn.id);
@@ -238,6 +278,16 @@ async function claimOutput(turnId: string): Promise<boolean> {
 export async function speakTurn(turnId: string, tabId: number | undefined, text: string, intent: OutputIntent = 'substantive'): Promise<void> {
   if (!(await runSerial(() => claimOutput(turnId)))) return;
   await deliverOutput(turnId, tabId, text, intent);
+}
+async function successfulLine(turnId: string, tabId: number | undefined, text: string, intent: OutputIntent = 'substantive'): Promise<void> {
+  if (!(await runSerial(() => claimOutput(turnId)))) return;
+  if (await deliverOutput(turnId, tabId, text, intent) !== 'delivered') return;
+  const claimed = await runSerial(async () => {
+    const turn = await getTurn();
+    if (!(await ownsTurn(turnId)) || turn.doneNotified) return false;
+    await setTurn({ ...turn, doneNotified: true }); return true;
+  });
+  if (claimed) await sendCue(turnId, 'done');
 }
 // One in-memory timer per processing turn. The deadline itself lives in session storage, so a worker that was killed re-arms from the stored
 // absolute time (rehydrateWait / any later event of the owning turn); the timer only decides when to look, the stored state decides whether to speak.
@@ -284,7 +334,7 @@ async function toggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promi
     const startGeneration = generation;
     await setTurn(next);
     if (!(await preparePageAccess(tab))) { await resetTurnIf(next.id); return; }
-    try { await ensureOffscreen(); if (startGeneration !== generation || cancelled.has(next.id!)) return; await chrome.runtime.sendMessage({ target: 'offscreen', type: 'REC_START', turnId: next.id }); }
+    try { await ensureOffscreen(); const earconsEnabled = await getEarconsEnabled(); if (startGeneration !== generation || cancelled.has(next.id!)) return; await chrome.runtime.sendMessage({ target: 'offscreen', type: 'REC_START', turnId: next.id, generation: startGeneration, earconsEnabled }); }
     catch { await announce(tab.id, msg.MIC_FAILED, 'status'); await resetTurnIf(next.id); }
   } else {
     await setTurn(next); armWait(next);
@@ -313,10 +363,17 @@ async function onOffscreen(message: FromOffscreen): Promise<(() => Promise<void>
   // After a worker restart the in-memory timer is gone; any event of the owning turn restores it from the stored deadline.
   armWait(turn);
   switch (message.type) {
-    case 'MIC_OPEN': await deliverOutput(turn.id, turn.tabId, msg.LISTENING, 'status'); break;
+    case 'MIC_OPEN':
+      if (turn.micNotified || turn.phase !== 'recording') break;
+      await setTurn({ ...turn, micNotified: true });
+      if (message.cuePlayed) lifecycleMark(turn.id, 'mic_open', 'cue');
+      await deliverOutput(turn.id, turn.tabId, msg.LISTENING, 'status'); break;
     case 'REC_STOPPED':
       // Autonomous stop (recording cap): the deadline starts here, before STT finishes; a user stop already started it.
-      if (turn.phase === 'recording') { const next = toProcessing(turn, Date.now()); await setTurn(next); armWait(next); }
+      if (turn.processingNotified) break;
+      { const next = { ...(turn.phase === 'recording' ? toProcessing(turn, Date.now()) : turn), processingNotified: true }; await setTurn(next); armWait(next); }
+      if (message.closeCuePlayed) lifecycleMark(turn.id, 'mic_close', 'cue');
+      await sendCue(turn.id, 'working');
       await deliverOutput(turn.id, turn.tabId, msg.PROCESSING, 'status'); break;
     case 'MIC_ERROR':
       await deliverOutput(turn.id, turn.tabId, msg.MIC_FAILURES[message.code], 'status');
@@ -347,6 +404,7 @@ export function setPending(turnId: string, pending: PendingInteraction): Promise
 }
 async function askPending(run: { turnId: string; tabId: number | undefined }, pending: PendingInteraction, prompt: string, intent: OutputIntent = 'substantive'): Promise<void> {
   const stored = await setPending(run.turnId, pending);
+  if (stored === 'stored') await sendCue(run.turnId, 'needs_confirmation');
   if (stored !== 'stale') await speakTurn(run.turnId, run.tabId, stored === 'failed' ? msg.STORAGE_FAILED : prompt, stored === 'failed' ? 'status' : intent);
 }
 export function claimPending(turnId: string): Promise<PendingInteraction | undefined> { return runSerial(async () => { if (!(await ownsTurn(turnId))) return undefined; const p = await getPending(); await chrome.storage.session.remove(SESSION_KEYS.pending); return p; }); }
@@ -388,7 +446,7 @@ export async function performProposal(run: CommandRun, step: ProposalStep): Prom
   }
   if (executed.kind === 'none') { await say(msg.noneSay(proposal.say)); return 'stopped'; }
   if (step.announce === 'model') await announceEffect(tabId, { kind: executed.kind, name: executed.name, role: executed.role }, executed.diff ?? { added: [], removed: [], changed: [], alerts: [] }, signal, turnId);
-  else if (step.announce === 'local') await say(msg.localEffect({ kind: executed.kind, name: executed.name, role: executed.role }, executed.diff ?? { added: [], removed: [], changed: [], alerts: [] }, step.category));
+  else if (step.announce === 'local') await successfulLine(turnId, tabId, msg.localEffect({ kind: executed.kind, name: executed.name, role: executed.role }, executed.diff ?? { added: [], removed: [], changed: [], alerts: [] }, step.category));
   return 'done';
 }
 export async function runParcelSearch(run: CommandRun, digits: string): Promise<'handoff' | void> {
@@ -407,7 +465,8 @@ export async function runParcelSearch(run: CommandRun, digits: string): Promise<
     const click = await performProposal(run, { proposal: { action: 'click', target: search.id, text: '', needs_confirmation: false, say: '' }, epoch: result.snapshot.epoch, docId: result.docId, preSnapshot: result.snapshot, announce: 'none' });
     if (click !== 'done') return click === 'handoff' ? 'handoff' : undefined;
     const status: ReadStatusResult = await chrome.tabs.sendMessage(run.tabId, { type: 'READ_STATUS', number: digits }, { frameId: 0 });
-    await say(status.ok ? msg.statusSpeech(status.status) : status.captcha ? msg.CAPTCHA_ON_PAGE : msg.STATUS_UNREAD);
+    if (status.ok && status.status.kind === 'status') await successfulLine(run.turnId, run.tabId, msg.statusSpeech(status.status));
+    else await say(status.ok ? msg.statusSpeech(status.status) : status.captcha ? msg.CAPTCHA_ON_PAGE : msg.STATUS_UNREAD);
   } catch { await say(msg.STATUS_UNREAD); }
 }
 async function parcelReadback(run: CommandRun, digits: string): Promise<void> {
@@ -435,7 +494,8 @@ async function runScroll(run: CommandRun, direction: ScrollDirection): Promise<v
   const result = decodeScrollResult(reply, docId);
   if (!result) { await say(msg.SCROLL_FAILED); return; }
   if (!result.ok) { await say(result.reason === 'stale' ? msg.SCROLL_CHANGED : msg.SCROLL_FAILED); return; }
-  await say(msg.scrollSpeech(direction, result));
+  if (result.outcome === 'unsupported') await say(msg.scrollSpeech(direction, result));
+  else await successfulLine(turnId, tabId, msg.scrollSpeech(direction, result), 'status');
 }
 // "powtórz": replays the exact text of the last substantive message delivered in THIS tab and document. It reads one session entry and the
 // document id; it never takes a snapshot, calls the proxy or touches the page, and the replay itself is not stored as a new response.
@@ -461,7 +521,7 @@ async function runVerbosity(run: CommandRun, direction: VerbosityDirection): Pro
   const next = moveVerbosity(current, direction);
   if (next === current) { await say(direction === 'shorter' ? msg.VERBOSITY_AT_SHORTEST : msg.VERBOSITY_AT_LONGEST); return; }
   try { await chrome.storage.local.set({ [VERBOSITY_KEY]: next }); } catch { await say(msg.VERBOSITY_NOT_SAVED); return; }
-  await say(msg.VERBOSITY_SPOKEN[next]);
+  await successfulLine(turnId, tabId, msg.VERBOSITY_SPOKEN[next], 'status');
 }
 // Read-only exploration: it requests a snapshot and speaks; it never sends EXECUTE, /api/action or stores a pending interaction.
 async function runSummary(run: CommandRun): Promise<void> {
@@ -479,7 +539,8 @@ async function runSummary(run: CommandRun): Promise<void> {
   catch (error) { await say(msg.failureText(classifyFailure(error), 'explore')); return; }
   if (!(await ownsTurn(turnId))) return;
   const sentences = decodeSummary(reply);
-  await say(sentences ? sentences.join(' ') : msg.EXPLORE_FAILED);
+  if (sentences) await successfulLine(turnId, tabId, sentences.join(' '));
+  else await say(msg.EXPLORE_FAILED);
 }
 // "co mogę zrobić?": candidates come from the live local policy, the model only ranks them, and the answer is re-judged and rendered locally.
 // The suggested ids live in this function only: they are never sent to EXECUTE, stored as a pending interaction or reused by a later command.
@@ -508,7 +569,7 @@ async function runActions(run: CommandRun): Promise<void> {
   if (!(await ownsTurn(turnId))) return;
   if (rechecked === null) { await say(msg.ACTIONS_FAILED); return; }
   if (rechecked === 'stale' || !rechecked.length) { await say(msg.ACTIONS_CHANGED); return; }
-  await say(msg.actionsList(rechecked, incomplete));
+  await successfulLine(turnId, tabId, msg.actionsList(rechecked, incomplete));
 }
 export async function runCommand(turnId: string, tabId: number | undefined, rawText: string): Promise<'handoff' | void> {
   if (isStopPhrase(rawText)) { await handleStop(); return; }
@@ -655,8 +716,9 @@ async function readyBody(tabId: number): Promise<void> {
     const result: SettleDiffResult = await chrome.tabs.sendMessage(tabId, { type: 'SETTLE_DIFF', preSnapshot: job.preSnapshot }, { frameId: 0 });
     if (!result.ok) throw new Error('snapshot_failed');
     if (!(await ownsTurn(job.turnId))) return;
-    if (job.effect === 'local') await speakTurn(job.turnId, tabId, msg.localEffect(job.action, result.diff));
+    if (job.effect === 'local') await successfulLine(job.turnId, tabId, msg.localEffect(job.action, result.diff));
     else await announceEffect(tabId, job.action, result.diff, turnSignal(job.turnId), job.turnId);
   } catch { await speakTurn(job.turnId, tabId, msg.effectFallback(job.action.kind, job.action.name)); }
   finally { await runSerial(async () => { await resetTurnIf(job.turnId); await dropJob(job.id); }); }
 }
+if (__E2E__) Object.assign(globalThis, { __audioControlTest: { sendCue } });

@@ -23,8 +23,8 @@ g.chrome = {
     get: async (key: string) => { if (localFault.read) throw new Error('storage read failed'); return localStore.has(key) ? { [key]: structuredClone(localStore.get(key)) } : {}; },
     set: async (items: Record<string, unknown>) => { if (localFault.write) throw new Error('quota exceeded'); localFault.writes++; for (const [k, v] of Object.entries(items)) localStore.set(k, structuredClone(v)); },
   } },
-  runtime: { id: 'ext', sendMessage: async (message: any) => { sent.push(message); }, getContexts: async () => [{}], ContextType: { OFFSCREEN_DOCUMENT: 'OFFSCREEN_DOCUMENT' }, openOptionsPage: async () => {} },
-  offscreen: { createDocument: async () => {}, Reason: { USER_MEDIA: 'USER_MEDIA' } },
+  runtime: { id: 'ext', sendMessage: async (message: any) => { sent.push(message); return message.type === 'AUDIO_SPEECH' ? { ok: true } : { result: 'failed' }; }, getContexts: async () => [{}], ContextType: { OFFSCREEN_DOCUMENT: 'OFFSCREEN_DOCUMENT' }, openOptionsPage: async () => {} },
+  offscreen: { createDocument: async () => {}, Reason: { USER_MEDIA: 'USER_MEDIA', AUDIO_PLAYBACK: 'AUDIO_PLAYBACK' } },
   tabs: { sendMessage: async (tabId: number, message: any) => { tabCalls.push({ tabId, message }); return tabHandler(tabId, message); } },
   tts: { stop: () => {}, speak: (text: string) => { spoken.push(text); } },
   scripting: { executeScript: async (opts: any) => { injected.push(opts); return injectHandler(opts); } },
@@ -131,7 +131,7 @@ test('a failed setup releases only its own reservation (CR-05)', async () => {
   tabHandler = () => { throw new Error('no content script'); };
   await pipeline.handleToggle({ id: 7, url: 'https://example.com/' } as chrome.tabs.Tab);
   assert.equal((await turn()).phase, 'idle');
-  assert.equal(sent.length, 0);
+  assert.equal(sent.filter(m => m.type === 'REC_START').length, 0);
   assert.equal(spoken.length, 0); assert.equal(store.get('outputRecovery'), 'page_access');
   await store.set('turn', { phase: 'recording', tabId: 9, startedAt: Date.now(), id: 'newer' });
   await pipeline.resetTurnIf('older');
@@ -728,7 +728,8 @@ test('access never carries over: the next command on a new document prepares tha
   await pipeline.handleToggle({ id: 7, url: 'https://example.com/a' } as chrome.tabs.Tab);
   await pipeline.resetTurn(); alive = false; // navigation replaced the document and its content script
   await pipeline.handleToggle({ id: 7, url: 'https://other.example/b' } as chrome.tabs.Tab);
-  assert.equal(injected.length, 2); assert.deepEqual(sent.map(m => m.type), ['REC_START', 'REC_STOP', 'REC_START']);
+  assert.equal(injected.length, 2); assert.deepEqual(sent.filter(m => m.type !== 'CANCEL_EARCONS').map(m => m.type), ['REC_START', 'REC_STOP', 'REC_START']);
+  assert(sent.some(m => m.type === 'CANCEL_EARCONS'));
 });
 // Conversation replay (OUT-03): exact, local, document-scoped, session-only.
 const SUMMARY_TEXT = 'To strona „Śledzenie przesyłek”. Zażółć gęślą jaźń: żółć.';
@@ -1256,4 +1257,64 @@ test('an uncertain effect never claims success and points to a read-only check',
     mock.timers.tick(15000); await pipeline.runSerial(async () => {});
     assert.deepEqual(announced(), ['Wykonałem polecenie, ale nie mogę potwierdzić, co się zmieniło na stronie. Powiedz „co tu jest”, żeby to sprawdzić.']);
   } finally { mock.timers.reset(); }
+});
+test('confirmation cue follows durable pending storage and storage failure produces no cue', async () => {
+  const originalSet = g.chrome.storage.session.set, originalSend = g.chrome.runtime.sendMessage;
+  let release!: () => void;
+  g.chrome.storage.session.set = async (items: Record<string, unknown>) => { if ('pending' in items) await new Promise<void>(resolve => { release = resolve; }); await originalSet(items); };
+  g.chrome.runtime.sendMessage = async (m: any) => { if (m.type === 'PLAY_EARCON') assert(store.has('pending')); return originalSend(m); };
+  try {
+    await pipeline.setTurn({ id: 'ask', tabId: 7, phase: 'processing', startedAt: Date.now() });
+    const asking = pipeline.runCommand('ask', 7, 'sprawdź status przesyłki');
+    for (let i = 0; !release && i < 20; i++) await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(sent.filter(m => m.type === 'PLAY_EARCON').length, 0);
+    release(); await asking;
+    assert.deepEqual(sent.filter(m => m.type === 'PLAY_EARCON').map(m => m.kind), ['needs_confirmation']);
+    sent.length = 0; store.delete('pending');
+    g.chrome.storage.session.set = async (items: Record<string, unknown>) => { if ('pending' in items) throw new Error('write failed'); await originalSet(items); };
+    await pipeline.runCommand('ask', 7, 'sprawdź status przesyłki');
+    assert.equal(sent.filter(m => m.type === 'PLAY_EARCON').length, 0);
+    assert(announced().includes(messages.STORAGE_FAILED));
+  } finally { g.chrome.storage.session.set = originalSet; g.chrome.runtime.sendMessage = originalSend; }
+});
+test('working is once-only and done is reserved for delivered measured success', async () => {
+  await pipeline.setTurn({ id: 'cue', tabId: 7, phase: 'recording', startedAt: Date.now() });
+  await pipeline.handleOffscreenMessage(message('cue', { type: 'REC_STOPPED' }));
+  await pipeline.handleOffscreenMessage(message('cue', { type: 'REC_STOPPED' }));
+  assert.equal(sent.filter(m => m.kind === 'working').length, 1);
+  await pipeline.runCommand('cue', 7, 'rozwiąż captcha');
+  assert.equal(sent.filter(m => m.kind === 'done').length, 0);
+  tabHandler = (_tab, m) => m.type === 'SNAPSHOT' ? { ok: true, docId: 'doc', snapshot: { ...snapshot, nodes: [{ role: 'heading', name: 'Strona', id: 'e1' }] } } : { ok: true, docId: 'doc' };
+  g.fetch = async () => ({ ok: true, json: async () => ({ sentences: ['To strona.'], candidate_ids: [] }) });
+  await pipeline.runCommand('cue', 7, 'co tu jest?');
+  assert.equal(sent.filter(m => m.kind === 'done').length, 1);
+  await pipeline.handleStop(); sent.length = 0;
+  assert.equal(await pipeline.sendCue('cue', 'done'), 'cancelled');
+  assert.equal(sent.filter(m => m.type === 'PLAY_EARCON').length, 0);
+});
+test('browser TTS holds the audio lane through terminal delivery and stop drops queued cues', async () => {
+  const originalSpeak = g.chrome.tts.speak;
+  const originalSend = g.chrome.runtime.sendMessage;
+  localStore.set('outputMode', 'browser_tts');
+  await pipeline.setTurn({ id: 'audio', tabId: 7, phase: 'processing', startedAt: Date.now() });
+  tabHandler = () => ({ ok: true, docId: 'doc' });
+  g.chrome.tts.getVoices = async () => [{ lang: 'pl-PL', voiceName: 'Polish' }];
+  let terminal!: (e: { type: string }) => void, speaking = false;
+  g.chrome.tts.speak = (_text: string, options: any) => { speaking = true; terminal = options.onEvent; };
+  g.chrome.runtime.sendMessage = async (m: any) => { if (m.type === 'PLAY_EARCON') { assert.equal(speaking, false); sent.push(m); return { result: 'played' }; } return originalSend(m); };
+  try {
+    const line = pipeline.deliverOutput('audio', 7, 'To strona.');
+    for (let i = 0; !terminal && i < 20; i++) await new Promise(resolve => setTimeout(resolve, 0));
+    const cue = pipeline.sendCue('audio', 'done'); await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(sent.filter(m => m.type === 'PLAY_EARCON').length, 0, 'speak acceptance is not completion');
+    speaking = false; terminal({ type: 'end' }); assert.equal(await line, 'delivered'); assert.equal(await cue, 'played');
+    terminal = undefined as any;
+    const next = pipeline.deliverOutput('audio', 7, 'Druga odpowiedź.');
+    for (let i = 0; !terminal && i < 20; i++) await new Promise(resolve => setTimeout(resolve, 0));
+    const stale = pipeline.sendCue('audio', 'working'); const playedBeforeStop = sent.filter(m => m.type === 'PLAY_EARCON').length;
+    await pipeline.handleStop(); speaking = false;
+    assert.equal(await next, 'cancelled'); assert.equal(await stale, 'cancelled');
+    assert.equal(sent.filter(m => m.type === 'PLAY_EARCON').length, playedBeforeStop);
+    assert(sent.some(m => m.type === 'CANCEL_EARCONS'));
+  } finally { g.chrome.tts.speak = originalSpeak; g.chrome.runtime.sendMessage = originalSend; }
 });

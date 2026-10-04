@@ -26,7 +26,7 @@ g.chrome = {
   runtime: { id: 'ext', sendMessage: async (message: any) => { sent.push(message); }, getContexts: async () => [{}], ContextType: { OFFSCREEN_DOCUMENT: 'OFFSCREEN_DOCUMENT' }, openOptionsPage: async () => {} },
   offscreen: { createDocument: async () => {}, Reason: { USER_MEDIA: 'USER_MEDIA' } },
   tabs: { sendMessage: async (tabId: number, message: any) => { tabCalls.push({ tabId, message }); return tabHandler(tabId, message); } },
-  tts: { speak: (text: string) => { spoken.push(text); } },
+  tts: { stop: () => {}, speak: (text: string) => { spoken.push(text); } },
   scripting: { executeScript: async (opts: any) => { injected.push(opts); return injectHandler(opts); } },
 };
 const pipeline = await import('./pipeline.ts');
@@ -34,6 +34,14 @@ const messages = await import('../shared/messages.pl.ts');
 const msgs = () => messages;
 const msg_ = (name: keyof typeof messages) => messages[name] as string;
 const turn = () => pipeline.getTurn() as Promise<any>;
+test('urgent stop discards processing capture and clears pending ownership', async () => {
+  store.set('turn', { id: 'stop-owner', tabId: 7, phase: 'processing', startedAt: Date.now() });
+  store.set('pending', { tabId: 7 }); store.set('pendingEffect', { turnId: 'stop-owner' });
+  await pipeline.handleToggle({ id: 22 } as chrome.tabs.Tab);
+  assert.equal((await turn()).phase, 'idle');
+  assert.equal(store.has('pending'), false); assert.equal(store.has('pendingEffect'), false);
+  assert(sent.some(m => m.type === 'REC_DISCARD' && m.turnId === 'stop-owner'));
+});
 beforeEach(() => { store.clear(); localStore.clear(); localFault.read = false; localFault.write = false; localFault.writes = 0; sent.length = 0; spoken.length = 0; tabCalls.length = 0; injected.length = 0; tabHandler = () => ({ ok: true }); injectHandler = () => [{ result: undefined }]; });
 
 test('rapid shortcut presses start then stop one recording and keep its owner (CR-05)', async () => {

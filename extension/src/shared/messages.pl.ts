@@ -38,11 +38,8 @@ export function statusSpeech(s: ParcelStatus): string {
   return spokenPrefix + cut.slice(0, boundary > 0 ? boundary : lastSpace > 0 ? lastSpace : cut.length).trimEnd() + ' ' + STATUS_TRUNCATED_NOTE;
 }
 export const LISTENING = 'Słucham.';
-export const PIPER_UNAVAILABLE = 'Piper jest niedostępny. Używam głosu przeglądarki.';
 export const PROCESSING = 'Przetwarzam.';
 export const BUSY = 'Jeszcze pracuję.';
-// Spoken once per turn when processing is still owned at the deadline (OUT-07). A routine status, never replayed.
-export const WAIT_NOTICE = 'To trwa dłużej niż zwykle';
 export const NOTHING_HEARD = 'Nic nie usłyszałem. Spróbuj jeszcze raz.';
 export const PAGE_UNSUPPORTED = 'Tej strony nie obsługuję. Otwórz zwykłą stronę internetową i spróbuj jeszcze raz.';
 export const PAGE_ACCESS_FAILED = 'Nie mam dostępu do tej strony. Odśwież ją i spróbuj jeszcze raz.';

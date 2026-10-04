@@ -6,7 +6,9 @@ import type { Proposal } from '../shared/validate.ts';
 import type { ExecuteResult } from '../shared/protocol.ts';
 import { spokenName } from '../shared/snapshot-format.ts';
 import { clickPre, fillPre } from '../shared/messages.pl.ts';
-export async function execute(epoch: number, proposal: Proposal, announcer: { host: HTMLElement; announce(text: string): void | Promise<void> }, commit: () => Promise<boolean> = async () => true, opts: { confirmed?: boolean; context?: string } = {}): Promise<ExecuteResult> {
+export async function execute(epoch: number, proposal: Proposal, announcer: { host: HTMLElement; announce(text: string): void | Promise<void | 'delivered' | 'cancelled'> }, commit: () => Promise<boolean> = async () => true, opts: { confirmed?: boolean; context?: string; alive?: () => boolean } = {}): Promise<ExecuteResult> {
+  const alive = opts.alive ?? (() => true);
+  if (!alive()) return { ok: false, reason: 'stale' };
   let resolved = ['click', 'fill'].includes(proposal.action) ? resolveTarget(proposal.target, epoch, opts.context) : { target: null, element: null, node: null };
   const verdict = validateProposal(proposal, resolved.target, opts);
   if (!verdict.ok) {
@@ -20,8 +22,9 @@ export async function execute(epoch: number, proposal: Proposal, announcer: { ho
   if (!(resolved.element instanceof HTMLElement) || !resolved.node) return { ok: false, reason: 'role_mismatch' };
   if (verdict.kind === 'fill' && !(resolved.element instanceof HTMLInputElement || resolved.element instanceof HTMLTextAreaElement)) return { ok: false, reason: 'role_mismatch' };
   const name = spokenName(resolved.node);
-  await announcer.announce(verdict.kind === 'click' ? clickPre(name) : fillPre(name));
+  if (await announcer.announce(verdict.kind === 'click' ? clickPre(name) : fillPre(name)) === 'cancelled' || !alive()) return { ok: false, reason: 'stale' };
   await new Promise(resolve => setTimeout(resolve, 300));
+  if (!alive()) return { ok: false, reason: 'stale' };
   // Revalidate all live policy signals across the announcement delay.
   resolved = resolveTarget(proposal.target, epoch, opts.context);
   const liveVerdict = validateProposal(proposal, resolved.target, opts);
@@ -39,7 +42,7 @@ export async function execute(epoch: number, proposal: Proposal, announcer: { ho
     if (afterFocus.element !== element || !(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) return { ok: false, reason: 'role_mismatch' };
   }
   // The background must acknowledge that the side effect is about to happen before it happens; without the acknowledgement nothing is done.
-  if (!(await commit())) return { ok: false, reason: 'unconfirmed' };
+  if (!(await commit()) || !alive()) return { ok: false, reason: 'unconfirmed' };
   const final = resolveTarget(proposal.target, epoch, opts.context), finalVerdict = validateProposal(proposal, final.target, opts);
   if (!finalVerdict.ok) return finalVerdict;
   if (final.element !== element) return { ok: false, reason: 'stale' };

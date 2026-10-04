@@ -26,7 +26,7 @@ g.chrome = {
   runtime: { id: 'ext', sendMessage: async (message: any) => { sent.push(message); }, getContexts: async () => [{}], ContextType: { OFFSCREEN_DOCUMENT: 'OFFSCREEN_DOCUMENT' }, openOptionsPage: async () => {} },
   offscreen: { createDocument: async () => {}, Reason: { USER_MEDIA: 'USER_MEDIA' } },
   tabs: { sendMessage: async (tabId: number, message: any) => { tabCalls.push({ tabId, message }); return tabHandler(tabId, message); } },
-  tts: { speak: (text: string) => { spoken.push(text); } },
+  tts: { stop: () => {}, speak: (text: string) => { spoken.push(text); } },
   scripting: { executeScript: async (opts: any) => { injected.push(opts); return injectHandler(opts); } },
 };
 const pipeline = await import('./pipeline.ts');
@@ -34,7 +34,87 @@ const messages = await import('../shared/messages.pl.ts');
 const msgs = () => messages;
 const msg_ = (name: keyof typeof messages) => messages[name] as string;
 const turn = () => pipeline.getTurn() as Promise<any>;
-beforeEach(() => { store.clear(); localStore.clear(); localFault.read = false; localFault.write = false; localFault.writes = 0; sent.length = 0; spoken.length = 0; tabCalls.length = 0; injected.length = 0; tabHandler = () => ({ ok: true }); injectHandler = () => [{ result: undefined }]; });
+test('urgent stop discards processing capture and clears pending ownership', async () => {
+  store.set('turn', { id: 'stop-owner', tabId: 7, phase: 'processing', startedAt: Date.now() });
+  store.set('pending', { tabId: 7 }); store.set('pendingEffect', { turnId: 'stop-owner' });
+  await pipeline.handleStop();
+  assert.equal((await turn()).phase, 'idle');
+  assert.equal(store.has('pending'), false); assert.equal(store.has('pendingEffect'), false);
+  assert(sent.some(m => m.type === 'REC_DISCARD'));
+});
+test('complete spoken stop is local while substring dictation reaches the model', async () => {
+  let requests = 0;
+  g.fetch = async () => { requests++; return { ok: true, json: async () => ({ action: 'none', target: '', text: '', needs_confirmation: false, say: 'Gotowe.' }) }; };
+  tabHandler = (_tab, m) => m.type === 'SNAPSHOT' ? { ok: true, docId: 'doc', snapshot: { epoch: 1, nodes: [], path: '/', title: '', truncated: false } } : { ok: true };
+  for (const text of [' STOP! ', 'zatrzymaj']) {
+    await pipeline.setTurn({ id: text, tabId: 7, phase: 'processing', startedAt: Date.now() });
+    await pipeline.runCommand(text, 7, text);
+    assert.equal(requests, 0); assert.equal((await turn()).phase, 'idle');
+  }
+  await pipeline.setTurn({ id: 'dictation', tabId: 7, phase: 'processing', startedAt: Date.now() });
+  await pipeline.runCommand('dictation', 7, 'wpisz stop w pole');
+  assert.equal(requests, 1);
+});
+test('default output failure stores fixed recovery and never switches to browser speech', async () => {
+  tabHandler = () => { throw new Error('removed content'); };
+  await pipeline.announce(7, 'Untrusted page text');
+  assert.deepEqual(spoken, []);
+  assert.equal(store.get('outputRecovery'), 'page_access');
+  assert(!JSON.stringify([...store]).includes('Untrusted page text'));
+});
+test('a late entry storage failure stays silent after urgent stop', async () => {
+  const original = g.chrome.storage.session.get;
+  let reject!: (error: Error) => void;
+  let held = false;
+  g.chrome.storage.session.get = (key: string) => {
+    if (!held) { held = true; return new Promise((_resolve, fail) => { reject = fail; }); }
+    return original(key);
+  };
+  try {
+    const notification = pipeline.handleOffscreenMessage({ target: 'sw', type: 'MIC_OPEN', turnId: 'old' });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const stopped = pipeline.handleStop();
+    reject(new Error('late storage failure'));
+    await Promise.all([notification, stopped]);
+    assert.equal(store.has('outputRecovery'), false);
+    assert.deepEqual(spoken, []);
+  } finally { g.chrome.storage.session.get = original; }
+});
+test('selected Polish TTS waits for terminal delivery and uses no live-region route', async () => {
+  localStore.set('outputMode', 'browser_tts');
+  tabHandler = () => ({ ok: true, docId: 'tts-document' });
+  const original = g.chrome.tts.speak;
+  let event!: (value: { type: string }) => void;
+  g.chrome.tts.getVoices = async () => [{ lang: 'PL-pl', voiceName: 'Polish voice' }];
+  g.chrome.tts.speak = (text: string, options: any) => { spoken.push(text); event = options.onEvent; assert.equal(options.enqueue, true); };
+  try {
+    let finished = false;
+    const delivery = pipeline.deliverOutput(undefined, 7, 'Browser line').then(result => { finished = true; return result; });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(finished, false); assert.equal(store.has('lastResponse'), false);
+    assert.equal(announced().length, 0);
+    event({ type: 'end' }); assert.equal(await delivery, 'delivered');
+    assert.equal((store.get('lastResponse') as any).docId, 'tts-document');
+    const interrupted = pipeline.deliverOutput(undefined, 7, 'Interrupted line');
+    await new Promise(resolve => setTimeout(resolve, 10)); await pipeline.handleStop();
+    assert.equal(await interrupted, 'cancelled'); event({ type: 'end' });
+    assert.equal((store.get('lastResponse') as any).text, 'Browser line');
+  } finally { g.chrome.tts.speak = original; }
+});
+test('missing Polish voice and terminal TTS failure recover without speaking the line twice', async () => {
+  const original = g.chrome.tts.speak;
+  try {
+    for (const missing of [true, false]) {
+      localStore.set('outputMode', 'browser_tts');
+      g.chrome.tts.getVoices = async () => missing ? [{ lang: 'en-US' }] : [{ lang: 'pl-PL' }];
+      g.chrome.tts.speak = (_text: string, opts: any) => { opts.onEvent({ type: 'error' }); };
+      assert.equal(await pipeline.deliverOutput(undefined, 7, 'Never duplicated', 'pre_action'), 'failed');
+      assert.equal(store.get('outputRecovery'), missing ? 'voice_unavailable' : 'voice_failed');
+      assert.equal(localStore.get('outputMode'), 'screen_reader'); assert.equal(announced().length, 0);
+    }
+  } finally { g.chrome.tts.speak = original; }
+});
+beforeEach(() => { pipeline.forgetWorkerMemory(); store.clear(); localStore.clear(); localFault.read = false; localFault.write = false; localFault.writes = 0; sent.length = 0; spoken.length = 0; tabCalls.length = 0; injected.length = 0; tabHandler = () => ({ ok: true }); injectHandler = () => [{ result: undefined }]; });
 
 test('rapid shortcut presses start then stop one recording and keep its owner (CR-05)', async () => {
   await Promise.all([pipeline.handleToggle({ id: 7, url: 'https://example.com/' } as chrome.tabs.Tab), pipeline.handleToggle({ id: 22, url: 'https://example.com/' } as chrome.tabs.Tab)]);
@@ -52,7 +132,7 @@ test('a failed setup releases only its own reservation (CR-05)', async () => {
   await pipeline.handleToggle({ id: 7, url: 'https://example.com/' } as chrome.tabs.Tab);
   assert.equal((await turn()).phase, 'idle');
   assert.equal(sent.length, 0);
-  assert.equal(spoken.length, 1);
+  assert.equal(spoken.length, 0); assert.equal(store.get('outputRecovery'), 'page_access');
   await store.set('turn', { phase: 'recording', tabId: 9, startedAt: Date.now(), id: 'newer' });
   await pipeline.resetTurnIf('older');
   assert.equal((await turn()).id, 'newer');
@@ -606,7 +686,7 @@ test('restricted, missing and malformed URLs never start recording, injection or
   for (const url of ['chrome://version', 'edge://settings', 'chrome-extension://abc/options.html', 'about:blank', 'file:///tmp/a.html', 'view-source:https://example.com/', 'https://chromewebstore.google.com/detail/x', 'https://chrome.google.com/webstore/detail/x', 'https://microsoftedge.microsoft.com/addons/detail/x', 'not a url', '', undefined]) {
     store.clear(); sent.length = 0; spoken.length = 0; tabCalls.length = 0; injected.length = 0;
     await pipeline.handleToggle({ id: 7, url } as chrome.tabs.Tab);
-    assert.deepEqual(spoken, [RESTRICTED], String(url));
+    assert.deepEqual(spoken, [], String(url)); assert.equal(store.get('outputRecovery'), 'page_unsupported');
     assert.equal((await turn()).phase, 'idle'); assert.deepEqual(sent, []); assert.deepEqual(injected, []); assert.deepEqual(tabCalls, []);
   }
 });
@@ -636,10 +716,10 @@ test('rejected or ineffective injection speaks an access recovery and never reco
   tabHandler = () => ({ ok: false });
   injectHandler = () => { throw new Error('Cannot access contents of the page'); };
   await pipeline.handleToggle({ id: 7, url: 'https://example.com/' } as chrome.tabs.Tab);
-  assert.deepEqual(spoken, [NO_ACCESS]); assert.deepEqual(sent, []); assert.equal((await turn()).phase, 'idle');
+  assert.deepEqual(spoken, []); assert.equal(store.get('outputRecovery'), 'page_access'); assert.deepEqual(sent, []); assert.equal((await turn()).phase, 'idle');
   spoken.length = 0; injected.length = 0; injectHandler = () => [{ result: undefined }];
   await pipeline.handleToggle({ id: 7, url: 'https://example.com/' } as chrome.tabs.Tab);
-  assert.equal(injected.length, 1); assert.deepEqual(spoken, [NO_ACCESS]); assert.deepEqual(sent, []); assert.equal((await turn()).phase, 'idle');
+  assert.equal(injected.length, 1); assert.deepEqual(spoken, []); assert.equal(store.get('outputRecovery'), 'page_access'); assert.deepEqual(sent, []); assert.equal((await turn()).phase, 'idle');
 });
 test('access never carries over: the next command on a new document prepares that page again', async () => {
   let alive = false; tabHandler = (_tab, m) => ({ ok: m.type === 'PING' ? alive : true });
@@ -698,7 +778,7 @@ test('with nothing to repeat a fixed Polish recovery with a next step is spoken 
 test('a response is saved only after the page acknowledged the live-region write', async () => {
   replayAdapter({ announceAck: () => { throw new Error('port closed'); } });
   await pipeline.announce(7, SUMMARY_TEXT);
-  assert.equal(store.has('lastResponse'), false); assert.deepEqual(spoken, [SUMMARY_TEXT]);
+  assert.equal(store.has('lastResponse'), false); assert.deepEqual(spoken, []); assert.equal(store.get('outputRecovery'), 'page_access');
   for (const ack of [{ ok: true }, { ok: false, docId: 'doc-1' }, undefined, null]) {
     spoken.length = 0; replayAdapter({ announceAck: () => ack });
     await pipeline.announce(7, SUMMARY_TEXT);
@@ -848,7 +928,8 @@ test('scroll phrases send one SCROLL request bound to turn, tab, document and fr
   scrollAdapter(() => moved());
   const id = crypto.randomUUID(); store.set('turn', { phase: 'processing', tabId: 7, startedAt: Date.now(), id });
   await pipeline.runCommand(id, 7, 'Przewiń w dół.');
-  assert.deepEqual(scrollRequests(), [{ type: 'SCROLL', direction: 'down', turnId: id, tabId: 7, docId: 'doc-1', frameId: 0 }]);
+  assert(Number.isSafeInteger(scrollRequests()[0].generation));
+  assert.deepEqual(scrollRequests().map(({ generation, ...request }) => request), [{ type: 'SCROLL', direction: 'down', turnId: id, tabId: 7, docId: 'doc-1', frameId: 0 }]);
   assert.equal(tabCalls.find(c => c.message.type === 'SCROLL')!.tabId, 7);
   assert.deepEqual(announced(), ['Przewinąłem w dół.']); untouched();
 });
@@ -877,7 +958,7 @@ test('forged, mismatched, failed and stale scroll replies never claim movement',
   scrollAdapter(() => { throw new Error('no receiver'); }); tabCalls.length = 0; await localCommand('przewiń w dół');
   assert.deepEqual(announced(), ['Nie udało się przewinąć strony. Spróbuj jeszcze raz.']);
   replayAdapter(); tabHandler = () => { throw new Error('no receiver'); }; tabCalls.length = 0; await localCommand('na górę');
-  assert.deepEqual(spoken, ['Nie udało się przewinąć strony. Spróbuj jeszcze raz.']);
+  assert.deepEqual(spoken, []); assert.equal(store.get('outputRecovery'), 'page_access');
 });
 test('a scroll for a replaced turn speaks nothing and the result never replaces the replay buffer', async () => {
   scrollAdapter(() => { store.set('turn', { phase: 'recording', tabId: 7, startedAt: Date.now(), id: 'replacement' }); return moved(); });
@@ -1145,7 +1226,7 @@ test('an unexpected exception inside a command is caught once and spoken, never 
   assert.deepEqual(announced(), ['Coś poszło nie tak. Spróbuj jeszcze raz.']);
   assert(!JSON.stringify([announced(), spoken]).includes(CANARY)); assert.equal(executes(), 0); assert.equal((await turn()).phase, 'idle');
 });
-test('storage failure at an entry point is spoken once through the fallback voice and never rejects', async () => {
+test('storage failure at an entry point uses trusted recovery and never unselected TTS', async () => {
   const original = g.chrome.storage.session.get;
   g.chrome.storage.session.get = async () => { throw new Error(CANARY); };
   try {
@@ -1153,7 +1234,7 @@ test('storage failure at an entry point is spoken once through the fallback voic
     await pipeline.handleOffscreenMessage(message('x', { type: 'MIC_OPEN' }));
     await pipeline.handleReady(7);
   } finally { g.chrome.storage.session.get = original; }
-  assert.deepEqual(spoken, Array(3).fill('Nie udało się zapisać stanu rozmowy. Spróbuj jeszcze raz.'));
+  assert.deepEqual(spoken, []); assert.equal(store.get('outputRecovery'), 'storage');
   assert(!spoken.join().includes(CANARY));
 });
 test('a stale or replaced turn stays silent about late failures and cannot overwrite the latest result', async () => {

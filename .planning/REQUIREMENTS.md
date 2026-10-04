@@ -50,7 +50,7 @@ Phase 1 checkboxes track delivered implementation after all declaring plans fini
 - [ ] **SAFE-02**: The confirmed action is executed exactly as proposed; "tak" is matched locally and never sent to the model for re-planning
 - [ ] **SAFE-03**: Agent never types passwords, SMS/BLIK codes or one-time codes and never attempts captcha; it stops, says why, and suggests human help
 - [x] **SAFE-04**: Sensitive fields (password, PESEL, IBAN, card number, CVV, one-time codes) are masked inside the content script before any data leaves it; the InPost parcel number is not falsely masked
-- [ ] **SAFE-05**: Barge-in: the stop shortcut (or "stop") immediately stops fallback speech, in-flight requests and pending actions
+- [x] **SAFE-05**: Barge-in: the stop shortcut (or "stop") immediately stops fallback speech, in-flight requests and pending actions
 - [ ] **SAFE-06**: Cookie-consent banners (e.g. Didomi on inpost.pl) are treated as legal consent and require "tak"
 - [ ] **SAFE-07**: User can open a local-only privacy preview showing exactly what would be sent to the model (off by default, nothing logged remotely)
 
@@ -132,7 +132,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SAFE-02 | Phase 2 | Pending |
 | SAFE-03 | Phase 2 | Pending |
 | SAFE-04 | Phase 1 | Complete |
-| SAFE-05 | Phase 4 | Pending |
+| SAFE-05 | Phase 4 | Complete |
 | SAFE-06 | Phase 2 | Pending |
 | SAFE-07 | Phase 4 | Pending |
 | PROXY-01 | Phase 1 | Complete |

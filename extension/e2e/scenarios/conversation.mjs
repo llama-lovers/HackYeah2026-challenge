@@ -236,7 +236,8 @@ async function scrollScenario(ctx) {
   now = await say('na górę', 'Jesteś na początku strony. Powiedz „przewiń w dół”, żeby czytać dalej.');
   assert.equal(now.y, 0);
   // Down to the bottom, a boundary there, then back to the top in one command.
-  for (let i = 0; i < 12 && (await state()).y < now.max - 1; i++) now = await say('przewiń', log => log.some(s => s.startsWith('Przewinąłem w dół.')));
+  const stepsToEnd = Math.ceil(now.max / step(now.h)) + 1;
+  for (let i = 0; i < stepsToEnd && (await state()).y < now.max - 1; i++) now = await say('przewiń', log => log.some(s => s.startsWith('Przewinąłem w dół.')));
   now = await state();
   assert(Math.abs(now.y - now.max) <= 1, `the document end was reached (${now.y} of ${now.max})`);
   now = await say('przewiń w dół', 'Jesteś na końcu strony. Powiedz „przewiń w górę”, żeby wrócić wyżej.');

@@ -2,18 +2,26 @@ import type { Proposal, RejectReason, ConfirmCategory } from './validate.ts';
 import type { Snapshot, PageDiff } from './snapshot-format.ts';
 export const LIVE_REGION_ID = 'voice-agent-live-region';
 export const COMMAND_TOGGLE = 'toggle-listening';
+export const COMMAND_STOP = 'stop-listening';
 export const SESSION_KEYS = { turn: 'turn', pendingEffect: 'pendingEffect', pending: 'pending', lastResponse: 'lastResponse' } as const;
 export const PENDING_EFFECT_MAX_AGE_MS = 15000;
 // The only durable conversation setting: one validated enum in chrome.storage.local. Never a transcript, page text or replay text.
 export const VERBOSITY_KEY = 'verbosity';
-export type ToContent = { type: 'PING' } | { type: 'SNAPSHOT' } | { type: 'EXECUTE'; epoch: number; proposal: Proposal; turnId: string; jobId: string; docId: string; confirmed?: boolean; context?: string } | { type: 'ANNOUNCE'; text: string } | { type: 'SETTLE_DIFF'; preSnapshot: Snapshot } | { type: 'READ_STATUS'; number: string } | { type: 'CANDIDATES' } | { type: 'RECHECK_CANDIDATES'; docId: string; epoch: number; ids: string[] } | ScrollRequest;
+export type OutputRequest = { type: 'OUTPUT'; turnId: string; docId: string; generation: number; text: string; intent: 'pre_action' };
+export function decodeOutputRequest(value: unknown): OutputRequest | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  if (v.type !== 'OUTPUT' || v.intent !== 'pre_action' || typeof v.text !== 'string' || !v.text.trim() || v.text.length > 2000 || typeof v.turnId !== 'string' || !v.turnId || v.turnId.length > 64 || typeof v.docId !== 'string' || !v.docId || v.docId.length > 64 || !Number.isSafeInteger(v.generation) || (v.generation as number) < 0) return undefined;
+  return { type: 'OUTPUT', turnId: v.turnId, docId: v.docId, generation: v.generation as number, text: v.text, intent: 'pre_action' };
+}
+export type ToContent = { type: 'CANCEL_OUTPUT'; generation: number } | { type: 'PING' } | { type: 'SNAPSHOT' } | { type: 'EXECUTE'; epoch: number; proposal: Proposal; turnId: string; jobId: string; docId: string; generation?: number; confirmed?: boolean; context?: string } | { type: 'ANNOUNCE'; text: string; generation?: number } | { type: 'SETTLE_DIFF'; preSnapshot: Snapshot } | { type: 'READ_STATUS'; number: string } | { type: 'CANDIDATES' } | { type: 'RECHECK_CANDIDATES'; docId: string; epoch: number; ids: string[] } | ScrollRequest;
 // Delivery acknowledgement of an ANNOUNCE: sent only after the live-region mutation happened, and it names the document that spoke.
 export type AnnounceResult = { ok: true; docId: string };
 export type PingResult = { ok: true; docId?: string };
 // Voice scrolling of the top-level document. The request is bound to the turn, tab, document and frame 0 that asked; the result is measured
 // by the page, never assumed: moved, already at the boundary, or unsupported (the visible content does not live in the document scroller).
 export type ScrollDirection = 'down' | 'up' | 'top';
-export type ScrollRequest = { type: 'SCROLL'; direction: ScrollDirection; turnId: string; tabId: number; docId: string; frameId: 0 };
+export type ScrollRequest = { type: 'SCROLL'; direction: ScrollDirection; turnId: string; tabId: number; docId: string; frameId: 0; generation?: number };
 export type ScrollOutcome = 'moved' | 'boundary' | 'unsupported';
 export type ScrollResult = { ok: true; docId: string; outcome: ScrollOutcome; before: number; after: number; max: number } | { ok: false; reason: 'stale' | 'invalid' };
 export function decodeScrollRequest(m: unknown): ScrollRequest | null {
@@ -22,7 +30,7 @@ export function decodeScrollRequest(m: unknown): ScrollRequest | null {
   if (v.type !== 'SCROLL' || !['down', 'up', 'top'].includes(v.direction as string)) return null;
   if (typeof v.turnId !== 'string' || !v.turnId || v.turnId.length > 64 || typeof v.docId !== 'string' || !v.docId || v.docId.length > 64) return null;
   if (typeof v.tabId !== 'number' || !Number.isSafeInteger(v.tabId) || v.frameId !== 0) return null;
-  return { type: 'SCROLL', direction: v.direction as ScrollDirection, turnId: v.turnId, tabId: v.tabId, docId: v.docId, frameId: 0 };
+  return { type: 'SCROLL', direction: v.direction as ScrollDirection, turnId: v.turnId, tabId: v.tabId, docId: v.docId, frameId: 0, ...(typeof v.generation === 'number' ? { generation: v.generation } : {}) };
 }
 // The reply crosses a runtime message boundary: shape, numbers and the echoed document id are checked before anything is spoken from it.
 export function decodeScrollResult(m: unknown, expectedDocId: string): ScrollResult | null {
@@ -44,7 +52,7 @@ export type RecheckResult = { ok: true; candidates: ExplorationCandidate[] } | {
 export type SettleDiffResult = { ok: true; diff: PageDiff } | { ok: false; error: 'snapshot_failed' };
 export type FromContent = { type: 'READY' } | { type: 'EXECUTING'; turnId: string; jobId: string };
 // Every recording command and offscreen event carries the immutable id of the turn that owns it, so late events can be ignored.
-export type ToOffscreen = { target: 'offscreen'; type: 'REC_START'; turnId: string } | { target: 'offscreen'; type: 'REC_STOP'; turnId: string; stubText?: string };
+export type ToOffscreen = { target: 'offscreen'; type: 'REC_START'; turnId: string } | { target: 'offscreen'; type: 'REC_STOP'; turnId: string; stubText?: string } | { target: 'offscreen'; type: 'REC_DISCARD'; turnId?: string };
 // Typed failure categories only: the offscreen document never forwards provider text, exception text or response bodies.
 export const STT_ERROR_CODES = ['stt_failed', 'stt_timeout', 'stt_invalid', 'not_configured', 'network', 'not_recording'] as const;
 export const MIC_ERROR_CODES = ['not_allowed', 'no_device', 'other'] as const;

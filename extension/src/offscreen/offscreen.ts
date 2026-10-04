@@ -22,6 +22,7 @@ function release(c: Capture): Promise<void> {
 }
 function discard(c: Capture) {
   c.discarded = true; c.abort.abort(); void release(c);
+  c.wavChunks = [];
   if (c.recorder && c.recorder.state !== 'inactive') {
     c.recorder.ondataavailable = null; c.recorder.onstop = null; c.recorder.onerror = null;
     try { c.recorder.stop(); } catch { /* already stopped */ }
@@ -29,6 +30,7 @@ function discard(c: Capture) {
   if (current === c) current = undefined;
 }
 async function upload(c: Capture, blob: Blob) {
+  if (c.discarded || c.abort.signal.aborted) return;
   if (blob.size < 1000) { await emit(c, { type: 'TRANSCRIPT', text: '' }); return; }
   let response: Response;
   try {
@@ -45,6 +47,7 @@ async function upload(c: Capture, blob: Blob) {
 async function transcribe(c: Capture, blob: Blob) {
   c.state = 'uploading';
   await emit(c, { type: 'REC_STOPPED' });
+  if (c.discarded) return;
   await upload(c, blob);
   if (current === c) current = undefined;
 }
@@ -113,6 +116,8 @@ async function start(turnId: string) {
 }
 chrome.runtime.onMessage.addListener((message: ToOffscreen, sender) => {
   if (sender.id !== chrome.runtime.id || message.target !== 'offscreen') return;
+  if (message.type === 'REC_DISCARD') { if (current && (message.turnId === undefined || message.turnId === current.turnId)) discard(current); return; }
+  if (typeof message.turnId !== 'string' || !message.turnId || message.turnId.length > 64) return;
   if (message.type === 'REC_START') void start(message.turnId);
   else if (message.type === 'REC_STOP') {
     const c = current;

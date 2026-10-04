@@ -8,25 +8,33 @@ export function createAnnouncer(doc: Document = document) {
   for (const node of nodes) { node.setAttribute('role', 'status'); node.setAttribute('aria-live', 'polite'); node.setAttribute('aria-atomic', 'true'); host.append(node); }
   doc.body.append(host);
   new MutationObserver(() => { if (!host.isConnected) doc.body.append(host); }).observe(doc.body, { childList: true });
-  const queue: { text: string; written: () => void }[] = [];
+  type Item = { text: string; generation: number; written: (result: 'delivered' | 'cancelled') => void };
+  const queue: Item[] = [];
+  let current: Item | undefined, cancelledThrough = -1;
   let draining = false, next = 0;
   const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
   async function drain() {
     if (draining) return;
     draining = true;
     while (queue.length) {
+      const item = current = queue.shift()!;
       for (const node of nodes) node.textContent = '';
       await sleep(60);
-      const item = queue.shift()!;
+      if (item.generation <= cancelledThrough) { item.written('cancelled'); current = undefined; continue; }
       nodes[next]!.textContent = item.text;
-      item.written();
+      item.written('delivered'); current = undefined;
       next = 1 - next;
       await sleep(300);
     }
     draining = false;
   }
-  return { host, announce(text: string): Promise<void> {
-    if (!text.trim()) return Promise.resolve();
-    return new Promise(resolve => { queue.push({ text, written: resolve }); void drain(); });
+  return { host, cancel(generation: number) {
+    cancelledThrough = Math.max(cancelledThrough, generation);
+    for (const node of nodes) node.textContent = '';
+    if (current && current.generation <= cancelledThrough) current.written('cancelled');
+    for (let i = queue.length - 1; i >= 0; i--) if (queue[i]!.generation <= cancelledThrough) queue.splice(i, 1)[0]!.written('cancelled');
+  }, announce(text: string, generation = 0): Promise<'delivered' | 'cancelled'> {
+    if (!text.trim() || generation <= cancelledThrough || queue.length >= 16) return Promise.resolve('cancelled');
+    return new Promise(resolve => { queue.push({ text, generation, written: resolve }); void drain(); });
   } };
 }

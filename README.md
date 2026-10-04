@@ -1,8 +1,8 @@
 # FastEcho
 
-FastEcho is a Chrome extension that helps blind and visually impaired users interact with Polish websites through voice commands. Built for HackYeah 2026, it can describe a page, suggest available actions, click controls, fill ordinary form fields, scroll, and report the observed result through the user's screen reader.
+FastEcho is a general-purpose Chrome extension that helps blind and visually impaired users interact with websites through Polish voice commands. Built for HackYeah 2026, it can describe a page, suggest available actions, click controls, fill ordinary form fields, scroll, and report the observed result through the user's screen reader.
 
-The main demo scenario is parcel tracking on InPost. The repository also includes local HTML fixtures for repeatable demonstrations and tests. User-facing commands and announcements are in Polish; this documentation is in English.
+The core browsing workflow works with the active website's DOM and accessible labels. The repository includes local HTML fixtures for repeatable demonstrations and tests. User-facing commands and announcements are in Polish; this documentation is in English.
 
 ## Features
 
@@ -12,7 +12,6 @@ The main demo scenario is parcel tracking on InPost. The repository also include
 - **Result feedback:** compare page state before and after an action and announce the observed change.
 - **Accessible output:** announcements use an ARIA live region, with Chrome TTS as a fallback when page messaging is unavailable.
 - **Conversation controls:** repeat the last response, adjust response detail, and answer clarification or confirmation questions.
-- **Parcel tracking:** collect a parcel number, read it back for confirmation, fill the tracking form, and read the resulting status.
 - **Sensitive-field protection:** mask recognized sensitive data in page snapshots and refuse actions on protected fields or CAPTCHA controls.
 
 ## Architecture
@@ -29,7 +28,7 @@ flowchart TD
         TTS["Chrome TTS fallback"]
     end
 
-    Page["Active website\nInPost or local demo fixtures"]
+    Page["Active website\nDOM and accessible controls"]
 
     subgraph Backend["Local FastAPI proxy — localhost:8787"]
         Transcribe["POST /api/transcribe\nFFmpeg and Silero VAD, or STT stub"]
@@ -71,7 +70,7 @@ extension/
   src/options/          Microphone permission and shortcut settings
   src/shared/           Protocols, masking, validation, and Polish commands
   static/               Manifest and HTML templates
-  e2e/                  Chromium integration tests and live InPost checks
+  e2e/                  Chromium integration tests and live website checks
 server/
   app/                  FastAPI proxy, model requests, and audio processing
   fixtures/             Local demo pages
@@ -150,11 +149,11 @@ The build generates `extension/dist/` and uses `http://localhost:8787` as the pr
 2. Choose **Load unpacked** and select `extension/dist/`.
 3. The extension's options page opens on first installation. Choose **Włącz mikrofon** (Enable microphone) and allow microphone access.
 4. Check the assigned shortcut at `chrome://extensions/shortcuts`; the default is `Alt+Shift+A`.
-5. Enable your screen reader, open a demo page, and issue a voice command.
+5. Enable your screen reader, open an ordinary HTTP(S) website, and issue a voice command. You can also use the local demo below.
 
 After changing extension code or build settings, rebuild and reload the extension in `chrome://extensions`. Reload the website too so it receives the updated content script.
 
-### 4. Try the local demo
+### 4. Try a local demo page
 
 Open:
 
@@ -176,7 +175,7 @@ Press `Alt+Shift+A`, say a command in Polish, and press the shortcut again to su
 | `Krócej` / `Dokładniej` | Adjust response detail. |
 | `Tak` / `Nie` | Confirm or decline a pending action. |
 
-For a fixture-only parcel demo, start tracking, provide `12345678` when asked for the parcel number, and confirm the read-back with `Tak`. The fixture simulates a tracking result; it does not query InPost. For the real service, open `https://inpost.pl/` and use a valid parcel number.
+For a fixture-only parcel demo, start tracking, provide `12345678` when asked for the parcel number, and confirm the read-back with `Tak`. The fixture simulates a tracking result locally.
 
 ### Transcription stub mode
 
@@ -273,7 +272,7 @@ npm run e2e
 
 The E2E runner builds into `dist-e2e/`, launches an isolated browser with a fake microphone, and starts a test proxy and fake OpenRouter on ports **8788** and **8799**. It does not require a real API key. Set `CHROMIUM_BIN` to the browser executable if it is not named `chromium`; use `HEADFUL=1` to show the test browser.
 
-Live InPost checks have a separate workflow and use real model calls. See [the live-test plan](extension/e2e/inpost-live/PLAN.md) and [the test report](tests/REPORT.md) for scope and recorded results.
+See [the test report](tests/REPORT.md) for test scope and recorded results.
 
 ## Optional WebSocket ASR service
 
@@ -310,7 +309,9 @@ Detailed configuration, protocol, and runtime requirements are documented in [li
 
 ## Scope and limitations
 
-This is a hackathon prototype focused on Polish voice interaction and the InPost demo. Ordinary HTTP(S) pages can receive the content script after an explicit shortcut invocation; automatic injection is configured for InPost and local fixtures. Execution targets the top-level document, and compatibility depends on the site's DOM and accessible labels.
+FastEcho is a general-purpose browsing assistant with Polish voice interaction. On ordinary HTTP(S) websites, pressing the shortcut grants access to the active tab and injects the content script when needed.
+
+This hackathon prototype executes actions in the top-level document. Compatibility depends on each site's DOM and accessible labels, so behavior may vary between websites.
 
 The main extension uploads a completed recording rather than streaming audio. Cloud-backed features require network access and may incur provider charges. Dynamic page changes, third-party widgets, and model errors can interrupt a command; announcements report observed page changes rather than independently verifying a transaction with the external service.
 

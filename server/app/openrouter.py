@@ -1,10 +1,13 @@
 """One stateless, strict-schema completion per call."""
 
 import json
+import logging
 
 import httpx
 
 from app.config import Settings
+
+logger = logging.getLogger("voice_agent.model")
 
 
 class UpstreamError(Exception):
@@ -16,6 +19,10 @@ class UpstreamError(Exception):
 async def chat_json(client: httpx.AsyncClient, settings: Settings, *, schema_name: str,
                     schema: dict, messages: list[dict], max_tokens: int) -> dict:
     try:
+        # This pinned model requires reasoning and defaults to high effort.
+        # Use its supported low effort for short browser decisions; leave
+        # other models' provider-specific settings unchanged.
+        reasoning = {"reasoning": {"effort": "low"}} if settings.chat_model == "anthropic/claude-sonnet-5.5" else {}
         response = await client.post("chat/completions", headers={
             "Authorization": f"Bearer {settings.openrouter_api_key}",
             "X-OpenRouter-Title": "Glosowy agent HackYeah",
@@ -26,6 +33,7 @@ async def chat_json(client: httpx.AsyncClient, settings: Settings, *, schema_nam
             }},
             "provider": {"require_parameters": True}, "temperature": 0,
             "max_tokens": max_tokens, "stream": False,
+            **reasoning,
         })
     except httpx.TimeoutException:
         raise UpstreamError("upstream_timeout") from None
@@ -36,6 +44,7 @@ async def chat_json(client: httpx.AsyncClient, settings: Settings, *, schema_nam
     try:
         choice = response.json()["choices"][0]
         if choice.get("finish_reason") == "length":
+            logger.warning("model response truncated schema=%s max_tokens=%d", schema_name, max_tokens)
             raise UpstreamError("model_truncated")
         content = choice["message"]["content"]
         if not isinstance(content, str):
@@ -52,13 +61,13 @@ async def warm_up(client, settings) -> dict[str, str]:
     from app.prompts import build_action_messages, build_effect_messages
     from app.schemas import ACTION_SCHEMA, EFFECT_SCHEMA, ExecutedAction, PageDiffModel
     calls = [
-        ("action_proposal", ACTION_SCHEMA, build_action_messages("kliknij Znajdź", 'button e1 "Znajdź"')),
-        ("effect_summary", EFFECT_SCHEMA, build_effect_messages(ExecutedAction(kind="click", name="Znajdź", role="button"), PageDiffModel())),
+        ("action_proposal", ACTION_SCHEMA, build_action_messages("kliknij Znajdź", 'button e1 "Znajdź"'), settings.action_max_tokens),
+        ("effect_summary", EFFECT_SCHEMA, build_effect_messages(ExecutedAction(kind="click", name="Znajdź", role="button"), PageDiffModel()), settings.effect_max_tokens),
     ]
     results = {}
-    for name, schema, messages in calls:
+    for name, schema, messages, max_tokens in calls:
         try:
-            await chat_json(client, settings, schema_name=name, schema=schema, messages=messages, max_tokens=50)
+            await chat_json(client, settings, schema_name=name, schema=schema, messages=messages, max_tokens=max_tokens)
             results[name] = "ok"
         except UpstreamError as exc:
             results[name] = exc.code

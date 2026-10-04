@@ -123,7 +123,7 @@ def test_effect_schema_and_limits():
             assert client.post("/api/effect", json={**EFFECT, "diff": diff}).status_code == 422
     data = captured[0]
     assert data["response_format"]["json_schema"] == {"name": "effect_summary", "strict": True, "schema": EFFECT_SCHEMA}
-    assert data["max_tokens"] == 150
+    assert data["max_tokens"] == 2048
 
 
 @pytest.mark.parametrize("key,response,status,code", [(None, None, 503, "no_api_key"), ("test-key", openrouter_reply("bad"), 502, "model_invalid_output"), ("test-key", openrouter_reply('{"say":"x","extra":1}'), 502, "model_invalid_output")])

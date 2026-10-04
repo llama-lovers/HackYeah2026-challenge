@@ -2,14 +2,14 @@ import type { Proposal, RejectReason, ConfirmCategory } from './validate.ts';
 import type { Snapshot, PageDiff } from './snapshot-format.ts';
 export const LIVE_REGION_ID = 'voice-agent-live-region';
 export const COMMAND_TOGGLE = 'toggle-listening';
-export const SESSION_KEYS = { turn: 'turn', pendingEffect: 'pendingEffect', pending: 'pending', lastResponse: 'lastResponse' } as const;
+export const SESSION_KEYS = { turn: 'turn', pendingEffect: 'pendingEffect', pending: 'pending', lastResponse: 'lastResponse', blankTabs: 'blankTabs' } as const;
 export const PENDING_EFFECT_MAX_AGE_MS = 15000;
 // The only durable conversation setting: one validated enum in chrome.storage.local. Never a transcript, page text or replay text.
 export const VERBOSITY_KEY = 'verbosity';
 export type ToContent = { type: 'PING' } | { type: 'SNAPSHOT' } | { type: 'EXECUTE'; epoch: number; proposal: Proposal; turnId: string; jobId: string; docId: string; confirmed?: boolean; context?: string } | { type: 'ANNOUNCE'; text: string } | { type: 'SETTLE_DIFF'; preSnapshot: Snapshot } | { type: 'READ_STATUS'; number: string } | { type: 'CANDIDATES' } | { type: 'RECHECK_CANDIDATES'; docId: string; epoch: number; ids: string[] } | ScrollRequest;
 // Delivery acknowledgement of an ANNOUNCE: sent only after the live-region mutation happened, and it names the document that spoke.
 export type AnnounceResult = { ok: true; docId: string };
-export type PingResult = { ok: true; docId?: string };
+export type PingResult = { ok: true; docId?: string; url?: string };
 // Voice scrolling of the top-level document. The request is bound to the turn, tab, document and frame 0 that asked; the result is measured
 // by the page, never assumed: moved, already at the boundary, or unsupported (the visible content does not live in the document scroller).
 export type ScrollDirection = 'down' | 'up' | 'top';

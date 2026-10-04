@@ -108,9 +108,19 @@ def test_extension_id_resolution(tmp_path):
 def test_env_template_names_only():
     lines = (SERVER_DIR / ".env.example").read_text().splitlines()
     names = [line for line in lines if line.strip() and not line.startswith("#")]
-    assert len(names) == 12 and "OPENROUTER_API_KEY=" in names
+    assert len(names) == 15 and "OPENROUTER_API_KEY=" in names
+    assert all(key + "=" in names for key in ("ACTION_MAX_TOKENS", "EFFECT_MAX_TOKENS", "EXPLORE_MAX_TOKENS"))
     assert "STT_AUDIO_DEBUG_DIR=" in names
     assert all(re.fullmatch(r"[A-Z_]+=", line) for line in names)
+
+
+def test_output_budgets_from_environment():
+    settings = Settings.from_env({"ACTION_MAX_TOKENS": "8192", "EFFECT_MAX_TOKENS": "1024", "EXPLORE_MAX_TOKENS": "2048"})
+    assert (settings.action_max_tokens, settings.effect_max_tokens, settings.explore_max_tokens) == (8192, 1024, 2048)
+    for key in ("ACTION_MAX_TOKENS", "EFFECT_MAX_TOKENS", "EXPLORE_MAX_TOKENS"):
+        for invalid in ("0", "-1", "255", "16385", "oops"):
+            with pytest.raises(ValueError):
+                Settings.from_env({key: invalid})
 
 
 def test_warmup_is_optional_and_redacted(caplog):
@@ -123,7 +133,7 @@ def test_warmup_is_optional_and_redacted(caplog):
     with make_client(handler, warmup_on_start=True) as client:
         assert client.get("/health").status_code == 200
     assert len(captured) == 2 and {r["response_format"]["json_schema"]["name"] for r in captured} == {"action_proposal", "effect_summary"}
-    assert all(r["max_tokens"] == 50 for r in captured)
+    assert [r["max_tokens"] for r in captured] == [Settings.action_max_tokens, Settings.effect_max_tokens]
     assert "WARMUP-CANARY" not in caplog.text
     with make_client(handler, warmup_on_start=True, openrouter_api_key=None):
         pass

@@ -2,6 +2,8 @@ import { SESSION_KEYS, VERBOSITY_KEY, PENDING_EFFECT_MAX_AGE_MS, decodeScrollRes
 import type { PingResult, FromOffscreen, SnapshotResult, CandidatesResult, ExecuteResult, ExecutedAction, PendingEffectJob, SettleDiffResult, ReadStatusResult } from '../shared/protocol.ts';
 import type { PageDiff, Snapshot } from '../shared/snapshot-format.ts';
 import { parseIntent, isCaptchaLabel } from '../shared/intent.ts';
+import { normalizeNavigationUrl, parseNavigationCommand } from '../shared/navigation.ts';
+import { googleSearchUrl, isBrowserStartPage, isGoogleSearchPage, parseBrowserSearch } from '../shared/browser-search.ts';
 import { wordsToDigits, digitsToSpokenGroups, speakable } from '../shared/polish-speech.ts';
 import { createBudget, takeStep } from '../shared/limits.ts';
 import type { StepBudget } from '../shared/limits.ts';
@@ -22,6 +24,12 @@ import { parseExploreCommand, decodeSummary, decodeActions, decodeRecheck, ACTIO
 import { toModelText, spokenName } from '../shared/snapshot-format.ts';
 import * as msg from '../shared/messages.pl.ts';
 import { postJson, classifyFailure } from './proxy.ts';
+function reportBrowserAction(turnId: string, kind: 'search' | 'navigate' | 'new_tab', stage: 'requested' | 'started' | 'failed'): void {
+  const event = { turn_id: turnId, kind, stage };
+  console.info('[voice-agent] browser action', event);
+  // Diagnostic only: no query/page data, no model request, never delay the action.
+  void postJson('/api/browser-action', event, 2000).catch(() => {});
+}
 let creating: Promise<void> | undefined;
 export async function getTurn(): Promise<TurnState> {
   return (await chrome.storage.session.get(SESSION_KEYS.turn))[SESSION_KEYS.turn] as TurnState | undefined ?? { phase: 'idle', startedAt: Date.now() };
@@ -54,6 +62,11 @@ export function isAccessibleUrl(url?: string): boolean {
 // ping again. Failures are spoken through the fallback voice because no page receiver may exist; recording must not start after one.
 export async function preparePageAccess(tab: chrome.tabs.Tab): Promise<boolean> {
   const tabId = tab.id;
+  // The browser start page has no injectable DOM, but can accept a spoken address.
+  if (tabId !== undefined && isBrowserStartPage(tab.url)) return true;
+  // After an extension reload Chrome may hide this URL and our blank-tab list is
+  // gone. Recording still supports browser commands; page reads/injection are not attempted.
+  if (tabId !== undefined && tab.url === undefined) return true;
   if (tabId === undefined || !isAccessibleUrl(tab.url)) { speakTts(msg.PAGE_UNSUPPORTED); return false; }
   if (await ping(tabId)) return true;
   try { await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: ['content/content.js'], world: 'ISOLATED' }); }
@@ -61,6 +74,10 @@ export async function preparePageAccess(tab: chrome.tabs.Tab): Promise<boolean> 
   if (await ping(tabId)) return true;
   speakTts(msg.PAGE_ACCESS_FAILED);
   return false;
+}
+async function blankTabs(): Promise<number[]> {
+  const value = (await chrome.storage.session.get(SESSION_KEYS.blankTabs))[SESSION_KEYS.blankTabs];
+  return Array.isArray(value) ? value.filter(id => Number.isSafeInteger(id) && id >= 0).slice(-10) : [];
 }
 export function speakTts(text: string): void { chrome.tts.speak(text, { lang: 'pl-PL', rate: 1.0 }); }
 // Every spoken line carries an intent. Only 'substantive' lines that the page acknowledged as written become the replay buffer.
@@ -174,12 +191,22 @@ async function toggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promi
     if (state.phase !== 'idle') { abortTurn(state.id); await chrome.storage.session.remove(SESSION_KEYS.pendingEffect); }
     // Reserve the recording owner before any asynchronous setup; failures only release this reservation.
     await setTurn(next);
-    if (!(await preparePageAccess(tab))) { await resetTurnIf(next.id); return; }
-    try { await ensureOffscreen(); await chrome.runtime.sendMessage({ target: 'offscreen', type: 'REC_START', turnId: next.id }); }
+    try {
+      // Prepare both in parallel, but never open the microphone without page access.
+      const [accessible] = await Promise.all([preparePageAccess(tab), ensureOffscreen()]);
+      if (!accessible) { await resetTurnIf(next.id); return; }
+      await chrome.runtime.sendMessage({ target: 'offscreen', type: 'REC_START', turnId: next.id });
+    }
     catch { await announce(tab.id, msg.MIC_FAILED, 'status'); await resetTurnIf(next.id); }
   } else {
-    await setTurn(next); armWait(next);
-    try { await chrome.runtime.sendMessage({ target: 'offscreen', type: 'REC_STOP', turnId: state.id, ...(__E2E__ && state.stubText !== undefined ? { stubText: state.stubText } : {}) }); }
+    try {
+      // Dispatch stop before waiting for storage. Incoming events remain serialized.
+      await Promise.all([
+        chrome.runtime.sendMessage({ target: 'offscreen', type: 'REC_STOP', turnId: state.id, ...(__E2E__ && state.stubText !== undefined ? { stubText: state.stubText } : {}) }),
+        setTurn(next),
+      ]);
+      armWait(next);
+    }
     catch { await announce(state.tabId, msg.NOT_RECORDING, 'status'); await resetTurnIf(state.id); }
   }
 }
@@ -203,11 +230,14 @@ async function onOffscreen(message: FromOffscreen): Promise<(() => Promise<void>
   // After a worker restart the in-memory timer is gone; any event of the owning turn restores it from the stored deadline.
   armWait(turn);
   switch (message.type) {
-    case 'MIC_OPEN': await announce(turn.tabId, msg.LISTENING, 'status'); break;
+    case 'MIC_OPEN':
+      if (turn.phase === 'recording') return () => announce(turn.tabId, msg.LISTENING, 'status');
+      break;
     case 'REC_STOPPED':
       // Autonomous stop (recording cap): the deadline starts here, before STT finishes; a user stop already started it.
       if (turn.phase === 'recording') { const next = toProcessing(turn, Date.now()); await setTurn(next); armWait(next); }
-      await announce(turn.tabId, msg.PROCESSING, 'status'); break;
+      // Reader acknowledgement must not hold the shortcut/state queue.
+      return () => announce(turn.tabId, msg.PROCESSING, 'status');
     case 'MIC_ERROR':
       await announce(turn.tabId, msg.MIC_FAILURES[message.code], 'status');
       if (message.code === 'not_allowed') await chrome.runtime.openOptionsPage().catch(() => {});
@@ -408,6 +438,59 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
   if (!text) { await say(msg.NOTHING_HEARD, 'status'); return; }
   const intent = parseIntent(text);
   if (intent.kind === 'captcha_request') { await say(msg.CAPTCHA_REFUSAL); return; }
+  let search = parseBrowserSearch(text);
+  // Google-specific field commands can submit a search directly. Other websites
+  // retain normal field filling; only inspect context when this grammar could match.
+  if (!search && tabId !== undefined && parseBrowserSearch(text, true)) {
+    try {
+      const page: PingResult = await chrome.tabs.sendMessage(tabId, { type: 'PING' }, { frameId: 0 });
+      if (page.ok && isGoogleSearchPage(page.url)) search = parseBrowserSearch(text, true);
+    } catch { /* No DOM on browser new-tab pages. Explicit browser searches still work. */ }
+  }
+  if (search) {
+    if ('invalid' in search) { await say(msg.SEARCH_QUERY_MISSING); return; }
+    if (tabId === undefined) { await say(msg.NAVIGATION_FAILED); return; }
+    reportBrowserAction(turnId, 'search', 'requested');
+    await say(msg.BROWSER_SEARCHING, 'pre_action');
+    try {
+      await runSerial(async () => {
+        if (!(await ownsTurn(turnId))) return;
+        await chrome.storage.session.remove(SESSION_KEYS.pending);
+        await dropReplayOf(tabId);
+        const address = search.addressBar ? normalizeNavigationUrl(search.query) : null;
+        const url = address ?? googleSearchUrl(search.query);
+        if (search.newTab) await chrome.tabs.create({ url, active: true, openerTabId: tabId });
+        else await chrome.tabs.update(tabId, { url });
+        reportBrowserAction(turnId, 'search', 'started');
+      });
+    } catch { reportBrowserAction(turnId, 'search', 'failed'); await say(msg.NAVIGATION_FAILED); }
+    return;
+  }
+  const navigation = parseNavigationCommand(text);
+  if (navigation) {
+    if (navigation.kind === 'invalid_url') { await say(msg.NAVIGATION_INVALID); return; }
+    if (tabId === undefined) { await say(msg.NAVIGATION_FAILED); return; }
+    reportBrowserAction(turnId, navigation.kind, 'requested');
+    await say('url' in navigation ? msg.openingAddress(navigation.url, navigation.kind === 'new_tab') : msg.NEW_TAB_OPENING, 'pre_action');
+    try {
+      await runSerial(async () => {
+        if (!(await ownsTurn(turnId))) return;
+        // Do not carry old confirmations or replay text to another destination.
+        await chrome.storage.session.remove(SESSION_KEYS.pending);
+        await dropReplayOf(tabId);
+        if (navigation.kind === 'new_tab') {
+          const created = await chrome.tabs.create({ active: true, openerTabId: tabId, ...('url' in navigation ? { url: navigation.url } : {}) });
+          if (!('url' in navigation) && created.id !== undefined) {
+            await chrome.storage.session.set({ [SESSION_KEYS.blankTabs]: [...await blankTabs(), created.id].slice(-10) });
+          }
+        } else {
+          await chrome.tabs.update(tabId, { url: navigation.url });
+        }
+        reportBrowserAction(turnId, navigation.kind, 'started');
+      });
+    } catch { reportBrowserAction(turnId, navigation.kind, 'failed'); await say(msg.NAVIGATION_FAILED); }
+    return;
+  }
   // Complete conversation phrases are answered locally and BEFORE the pending interaction is claimed: "powtórz" must be able to
   // repeat a confirmation question without consuming it. They never reach a snapshot, the model or an action.
   const command = parseConversationCommand(text);
@@ -505,6 +588,8 @@ export function expireJob(jobId: string): Promise<void> {
 }
 export function handleTabRemoved(tabId: number): Promise<void> {
   return runSerial(async () => {
+    const blanks = await blankTabs();
+    if (blanks.includes(tabId)) await chrome.storage.session.set({ [SESSION_KEYS.blankTabs]: blanks.filter(id => id !== tabId) });
     await dropReplayOf(tabId);
     if ((await getPending())?.tabId === tabId) await chrome.storage.session.remove(SESSION_KEYS.pending);
     const [turn, job] = [await getTurn(), await getJob()];

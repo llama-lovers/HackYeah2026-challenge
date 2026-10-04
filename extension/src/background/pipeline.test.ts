@@ -11,6 +11,8 @@ const spoken: string[] = [];
 const tabCalls: { tabId: number; message: any }[] = [];
 let tabHandler: Handler = () => ({ ok: true });
 const injected: any[] = [];
+const browserActions: any[] = [];
+let browserFailure = false;
 let injectHandler: (opts: any) => unknown = () => [{ result: undefined }];
 const g = globalThis as any;
 g.__PROXY_URL__ = 'http://localhost:8787'; g.__E2E__ = false;
@@ -25,7 +27,11 @@ g.chrome = {
   } },
   runtime: { id: 'ext', sendMessage: async (message: any) => { sent.push(message); }, getContexts: async () => [{}], ContextType: { OFFSCREEN_DOCUMENT: 'OFFSCREEN_DOCUMENT' }, openOptionsPage: async () => {} },
   offscreen: { createDocument: async () => {}, Reason: { USER_MEDIA: 'USER_MEDIA' } },
-  tabs: { sendMessage: async (tabId: number, message: any) => { tabCalls.push({ tabId, message }); return tabHandler(tabId, message); } },
+  tabs: {
+    sendMessage: async (tabId: number, message: any) => { tabCalls.push({ tabId, message }); return tabHandler(tabId, message); },
+    create: async (options: any) => { if (browserFailure) throw new Error('tab unavailable'); browserActions.push({ type: 'create', options }); return { id: 8 }; },
+    update: async (tabId: number, options: any) => { if (browserFailure) throw new Error('tab unavailable'); browserActions.push({ type: 'update', tabId, options }); return { id: tabId }; },
+  },
   tts: { speak: (text: string) => { spoken.push(text); } },
   scripting: { executeScript: async (opts: any) => { injected.push(opts); return injectHandler(opts); } },
 };
@@ -34,13 +40,85 @@ const messages = await import('../shared/messages.pl.ts');
 const msgs = () => messages;
 const msg_ = (name: keyof typeof messages) => messages[name] as string;
 const turn = () => pipeline.getTurn() as Promise<any>;
-beforeEach(() => { store.clear(); localStore.clear(); localFault.read = false; localFault.write = false; localFault.writes = 0; sent.length = 0; spoken.length = 0; tabCalls.length = 0; injected.length = 0; tabHandler = () => ({ ok: true }); injectHandler = () => [{ result: undefined }]; });
+beforeEach(() => { store.clear(); localStore.clear(); localFault.read = false; localFault.write = false; localFault.writes = 0; sent.length = 0; spoken.length = 0; tabCalls.length = 0; injected.length = 0; browserActions.length = 0; browserFailure = false; tabHandler = () => ({ ok: true }); injectHandler = () => [{ result: undefined }]; });
+
+test('spoken browser navigation opens exact user address without a model and clears old confirmation', async () => {
+  g.fetch = async () => { throw new Error('navigation must not call model'); };
+  for (const [text, expected] of [
+    ['przejdź na example.com/Case?Q=X', { type: 'update', tabId: 7, options: { url: 'https://example.com/Case?Q=X' } }],
+    ['otwórz example.com w nowej karcie', { type: 'create', options: { active: true, openerTabId: 7, url: 'https://example.com/' } }],
+    ['otwórz nową kartę', { type: 'create', options: { active: true, openerTabId: 7 } }],
+  ] as const) {
+    store.set('turn', { phase: 'processing', tabId: 7, startedAt: Date.now(), id: 'nav' });
+    store.set('pending', { kind: 'await_parcel_number', tabId: 7 });
+    store.set('lastResponse', { tabId: 7, docId: 'doc-1', text: 'Poprzednia strona.' });
+    await pipeline.runCommand('nav', 7, text);
+    assert.deepEqual(browserActions.at(-1), expected);
+    assert.equal(store.has('pending'), false);
+    assert.equal(store.has('lastResponse'), false);
+  }
+  assert(!tabCalls.some(c => ['SNAPSHOT', 'EXECUTE'].includes(c.message.type)));
+});
+
+test('invalid addresses, replaced turns and browser failures never claim a completed navigation', async () => {
+  store.set('turn', { phase: 'processing', tabId: 7, startedAt: Date.now(), id: 'nav' });
+  await pipeline.runCommand('nav', 7, 'otwórz adres javascript:alert(1)');
+  assert.equal(browserActions.length, 0);
+  assert(tabCalls.some(c => c.message.text === messages.NAVIGATION_INVALID));
+  await pipeline.runCommand('older', 7, 'przejdź na example.com');
+  assert.equal(browserActions.length, 0);
+  browserFailure = true;
+  await pipeline.runCommand('nav', 7, 'przejdź na example.com');
+  assert(tabCalls.some(c => c.message.text === messages.NAVIGATION_FAILED));
+});
+
+test('browser new-tab page accepts voice without injecting a content script', async () => {
+  await pipeline.handleToggle({ id: 7, url: 'chrome://newtab/' } as chrome.tabs.Tab);
+  assert.deepEqual(sent.map(m => m.type), ['REC_START']);
+  assert.deepEqual(injected, []);
+  assert.deepEqual(tabCalls, []);
+});
+
+test('our blank tabs accept voice with hidden URL and are forgotten when closed', async () => {
+  store.set('blankTabs', [7]);
+  await pipeline.handleToggle({ id: 7 } as chrome.tabs.Tab);
+  assert.deepEqual(sent.map(m => m.type), ['REC_START']);
+  assert.deepEqual(injected, []);
+  await pipeline.handleTabRemoved(7);
+  assert.deepEqual(store.get('blankTabs'), []);
+});
 
 test('rapid shortcut presses start then stop one recording and keep its owner (CR-05)', async () => {
   await Promise.all([pipeline.handleToggle({ id: 7, url: 'https://example.com/' } as chrome.tabs.Tab), pipeline.handleToggle({ id: 22, url: 'https://example.com/' } as chrome.tabs.Tab)]);
   assert.deepEqual(sent.map(m => m.type), ['REC_START', 'REC_STOP']);
   const state = await turn();
   assert.equal(state.tabId, 7); assert.equal(state.phase, 'processing');
+});
+
+test('a slow listening announcement does not delay the stop shortcut', async () => {
+  await pipeline.handleToggle({ id: 7, url: 'https://example.com/' } as chrome.tabs.Tab);
+  const id = (await turn()).id;
+  let release!: () => void;
+  let started!: () => void;
+  const announcing = new Promise<void>(resolve => { started = resolve; });
+  tabHandler = (_tab, m) => m.type === 'ANNOUNCE' ? new Promise(resolve => {
+    release = () => resolve({ ok: true }); started();
+  }) : { ok: true };
+  const listening = pipeline.handleOffscreenMessage(message(id, { type: 'MIC_OPEN' }));
+  await announcing;
+  try {
+    await pipeline.handleToggle({ id: 7, url: 'https://example.com/' } as chrome.tabs.Tab);
+    assert.equal(sent.at(-1).type, 'REC_STOP');
+    assert.equal((await turn()).phase, 'processing');
+  } finally { release(); await listening; }
+});
+
+test('late microphone-open event does not announce listening after stop', async () => {
+  await pipeline.handleToggle({ id: 7, url: 'https://example.com/' } as chrome.tabs.Tab);
+  const id = (await turn()).id;
+  await pipeline.handleToggle({ id: 7, url: 'https://example.com/' } as chrome.tabs.Tab);
+  await pipeline.handleOffscreenMessage(message(id, { type: 'MIC_OPEN' }));
+  assert.equal(tabCalls.filter(c => c.message.type === 'ANNOUNCE').length, 0);
 });
 test('shortcuts from two tabs never create two recording owners (CR-05)', async () => {
   await Promise.all([pipeline.handleToggle({ id: 7, url: 'https://example.com/' } as chrome.tabs.Tab), pipeline.handleToggle({ id: 22, url: 'https://example.com/' } as chrome.tabs.Tab), pipeline.handleToggle({ id: 22, url: 'https://example.com/' } as chrome.tabs.Tab)]);
@@ -603,12 +681,53 @@ test('an unreadable page and an unreachable proxy are spoken without any executi
 const RESTRICTED = 'Tej strony nie obsługuję. Otwórz zwykłą stronę internetową i spróbuj jeszcze raz.';
 const NO_ACCESS = 'Nie mam dostępu do tej strony. Odśwież ją i spróbuj jeszcze raz.';
 test('restricted, missing and malformed URLs never start recording, injection or a page ping', async () => {
-  for (const url of ['chrome://version', 'edge://settings', 'chrome-extension://abc/options.html', 'about:blank', 'file:///tmp/a.html', 'view-source:https://example.com/', 'https://chromewebstore.google.com/detail/x', 'https://chrome.google.com/webstore/detail/x', 'https://microsoftedge.microsoft.com/addons/detail/x', 'not a url', '', undefined]) {
+  for (const url of ['chrome://version', 'edge://settings', 'chrome-extension://abc/options.html', 'about:blank', 'file:///tmp/a.html', 'view-source:https://example.com/', 'https://chromewebstore.google.com/detail/x', 'https://chrome.google.com/webstore/detail/x', 'https://microsoftedge.microsoft.com/addons/detail/x', 'not a url', '']) {
     store.clear(); sent.length = 0; spoken.length = 0; tabCalls.length = 0; injected.length = 0;
     await pipeline.handleToggle({ id: 7, url } as chrome.tabs.Tab);
     assert.deepEqual(spoken, [RESTRICTED], String(url));
     assert.equal((await turn()).phase, 'idle'); assert.deepEqual(sent, []); assert.deepEqual(injected, []); assert.deepEqual(tabCalls, []);
   }
+});
+
+test('search after opening a browser start page uses browser navigation without DOM or model', async () => {
+  g.fetch = async () => { throw new Error('browser search must not call model'); };
+  tabHandler = () => { throw new Error('new tab has no content script'); };
+  for (const url of ['chrome://newtab/', 'chrome://new-tab-page/', undefined]) {
+    store.clear(); sent.length = 0;
+    await pipeline.handleToggle({ id: 7, url } as chrome.tabs.Tab);
+    assert.deepEqual(sent.map(m => m.type), ['REC_START']);
+    const id = (await turn()).id;
+    await pipeline.handleOffscreenMessage(message(id, { type: 'TRANSCRIPT', text: 'wyszukaj paczkomaty w Warszawie' }));
+    assert.deepEqual(browserActions.at(-1), { type: 'update', tabId: 7, options: { url: 'https://www.google.com/search?q=paczkomaty+w+Warszawie' } });
+    assert.equal((await turn()).phase, 'idle');
+  }
+  assert(!tabCalls.some(c => ['SNAPSHOT', 'EXECUTE'].includes(c.message.type)));
+  assert.deepEqual(injected, []);
+});
+
+test('address bar accepts addresses or searches, and explicit new-tab searches create a new tab', async () => {
+  for (const [text, expected] of [
+    ['wpisz inpost.pl w pasek adresu', { type: 'update', tabId: 7, options: { url: 'https://inpost.pl/' } }],
+    ['wpisz czerwone koty w pasek adresu', { type: 'update', tabId: 7, options: { url: 'https://www.google.com/search?q=czerwone+koty' } }],
+    ['wyszukaj koty w nowej karcie', { type: 'create', options: { url: 'https://www.google.com/search?q=koty', active: true, openerTabId: 7 } }],
+  ] as const) {
+    store.set('turn', { phase: 'processing', tabId: 7, startedAt: Date.now(), id: 'search' });
+    await pipeline.runCommand('search', 7, text);
+    assert.deepEqual(browserActions.at(-1), expected);
+  }
+});
+
+test('Google homepage field command searches without snapshot/model even with a missing tab URL', async () => {
+  tabHandler = (_tab, m) => m.type === 'PING' ? { ok: true, docId: 'google-doc', url: 'https://www.google.com/' } : { ok: true };
+  const requests: any[] = [];
+  g.fetch = async (url: string, init: any) => { requests.push({ url, body: JSON.parse(init.body) }); return { ok: true, json: async () => ({ ok: true }) }; };
+  await pipeline.handleToggle({ id: 7 } as chrome.tabs.Tab);
+  const id = (await turn()).id;
+  await pipeline.handleOffscreenMessage(message(id, { type: 'TRANSCRIPT', text: 'wpisz czerwone koty w pole wyszukiwania i wyszukaj' }));
+  assert.deepEqual(browserActions.at(-1), { type: 'update', tabId: 7, options: { url: 'https://www.google.com/search?q=czerwone+koty' } });
+  assert(!tabCalls.some(c => ['SNAPSHOT', 'EXECUTE'].includes(c.message.type)));
+  assert(requests.every(r => r.url.endsWith('/api/browser-action')));
+  assert.deepEqual(requests.map(r => r.body.stage), ['requested', 'started']);
 });
 test('an already initialized page is not injected again and recording starts', async () => {
   for (const url of ['https://inpost.pl/sledzenie-przesylek', 'http://localhost:8788/fixtures/a.html', 'https://example.com/a?b=1#c']) {

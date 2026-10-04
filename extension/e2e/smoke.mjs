@@ -27,8 +27,12 @@ new MutationObserver(records => {
   }
 }).observe(document, {subtree:true, childList:true, characterData:true});`;
 try {
-  fake = await startProcess('uv', ['run', '--directory', SERVER_DIR, 'python', '-m', 'tests.fake_openrouter', '--port', '8799', '--record', record], { readyUrl: 'http://127.0.0.1:8799/health' });
-  proxy = await startProcess('uv', ['run', '--directory', SERVER_DIR, 'uvicorn', 'app.main:create_app', '--factory', '--port', '8788', '--no-access-log'], {
+  // An existing virtualenv can run the suite without installing uv.
+  const python = process.env.PYTHON_BIN;
+  const service = args => python ? [python, ['-m', ...args]] : ['uv', ['run', '--directory', SERVER_DIR, 'python', '-m', ...args]];
+  fake = await startProcess(...service(['tests.fake_openrouter', '--port', '8799', '--record', record]), { cwd: SERVER_DIR, readyUrl: 'http://127.0.0.1:8799/health' });
+  proxy = await startProcess(...service(['uvicorn', 'app.main:create_app', '--factory', '--port', '8788', '--no-access-log']), {
+    cwd: SERVER_DIR,
     env: { OPENROUTER_API_KEY: 'e2e-dummy-key', OPENROUTER_BASE_URL: 'http://127.0.0.1:8799/api/v1', STT_MODE: 'stub', STT_STUB_TEXT: 'kliknij Znajdź', EXTENSION_ID: extensionId, WARMUP_ON_START: '0' }, readyUrl: proxyOrigin + '/health',
   });
   let lastBuild;

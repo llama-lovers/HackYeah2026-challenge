@@ -5,7 +5,8 @@ import { RECORDING_CAP_MS } from '../shared/limits.ts';
 // One capture per turn. Every event it emits carries its turn id, and a capture of an older turn is discarded
 // (microphone released, upload aborted, no further events) as soon as a different turn starts.
 interface Capture {
-  turnId: string; state: 'opening' | 'recording' | 'uploading'; discarded: boolean; stopRequested: boolean; failed: boolean; stubText?: string;
+  turnId: string; state: 'opening' | 'recording' | 'stopping' | 'uploading'; discarded: boolean; stopRequested: boolean; failed: boolean; stubText?: string;
+  stopped?: Promise<void>;
   abort: AbortController; timer?: ReturnType<typeof setTimeout>; stream?: MediaStream; recorder?: MediaRecorder;
   context?: AudioContext; source?: MediaStreamAudioSourceNode; processor?: ScriptProcessorNode; wavChunks: Float32Array[];
 }
@@ -44,7 +45,7 @@ async function upload(c: Capture, blob: Blob) {
 }
 async function transcribe(c: Capture, blob: Blob) {
   c.state = 'uploading';
-  await emit(c, { type: 'REC_STOPPED' });
+  await (c.stopped ??= emit(c, { type: 'REC_STOPPED' }));
   await upload(c, blob);
   if (current === c) current = undefined;
 }
@@ -63,8 +64,17 @@ function stop(c: Capture) {
   if (c.discarded) return;
   if (c.state === 'opening') { c.stopRequested = true; return; }
   if (c.state !== 'recording') return;
-  if (c.recorder) { if (c.recorder.state === 'recording') c.recorder.stop(); }
-  else void finishWav(c);
+  c.state = 'stopping';
+  clearTimeout(c.timer);
+  if (c.recorder) {
+    if (c.recorder.state === 'recording') c.recorder.stop();
+    // Release the physical microphone now, not after an asynchronous stop event.
+    void release(c);
+    c.stopped ??= emit(c, { type: 'REC_STOPPED' });
+  } else {
+    void finishWav(c);
+    c.stopped ??= emit(c, { type: 'REC_STOPPED' });
+  }
 }
 async function start(turnId: string) {
   if (current?.turnId === turnId) return;
@@ -74,6 +84,13 @@ async function start(turnId: string) {
   try {
     c.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
     if (c.discarded) { void release(c); return; }
+    // A second shortcut during permission/device setup cancels capture entirely.
+    if (c.stopRequested) {
+      void release(c);
+      await transcribe(c, new Blob());
+      if (current === c) current = undefined;
+      return;
+    }
     if (__AUDIO_FORMAT__ === 'wav') {
       c.context = new AudioContext();
       c.source = c.context.createMediaStreamSource(c.stream);
@@ -83,9 +100,9 @@ async function start(turnId: string) {
       await c.context.resume();
       if (c.discarded) { void release(c); return; }
       c.state = 'recording';
-      await emit(c, { type: 'MIC_OPEN' });
       c.timer = setTimeout(() => stop(c), RECORDING_CAP_MS);
       if (c.stopRequested) stop(c);
+      else void emit(c, { type: 'MIC_OPEN' });
       return;
     }
     const chunks: Blob[] = [];
@@ -96,7 +113,12 @@ async function start(turnId: string) {
       void emit(c, { type: 'TRANSCRIBE_ERROR', code: 'not_recording' });
       discard(c);
     };
-    recorder.onstart = () => { c.state = 'recording'; void emit(c, { type: 'MIC_OPEN' }); c.timer = setTimeout(() => stop(c), RECORDING_CAP_MS); if (c.stopRequested) stop(c); };
+    recorder.onstart = () => {
+      c.state = 'recording';
+      c.timer = setTimeout(() => stop(c), RECORDING_CAP_MS);
+      if (c.stopRequested) stop(c);
+      else void emit(c, { type: 'MIC_OPEN' });
+    };
     recorder.onstop = async () => {
       void release(c);
       if (c.discarded || c.failed) return;

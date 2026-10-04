@@ -21,7 +21,7 @@ if (!globals.__voiceAgentInitialized) {
         if (!isParcelDigits(message.number)) { respond({ ok: false, error: 'invalid_number' }); break; }
         void waitForParcelStatus(document, message.number).then(respond).catch(() => respond({ ok: false, error: 'not_found' }));
         return true;
-      case 'PING': respond({ ok: true, docId: getDocumentId() }); break;
+      case 'PING': respond({ ok: true, docId: getDocumentId(), url: location.href }); break;
       case 'ANNOUNCE':
         // The acknowledgement follows the queued live-region mutation, so the worker may treat the text as delivered.
         if (typeof message.text !== 'string') { respond({ ok: false }); break; }

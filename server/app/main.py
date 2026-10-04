@@ -20,7 +20,7 @@ from app.middleware import AccessLogMiddleware, BodyLimitMiddleware, OriginGuard
 from app.exploration import EXPLORATION_SCHEMA, ExplorationRequest, build_exploration_messages, validate_exploration_output
 from app.openrouter import UpstreamError, chat_json, warm_up
 from app.prompts import build_action_messages, build_effect_messages
-from app.schemas import ACTION_SCHEMA, EFFECT_SCHEMA, ActionProposal, ActionRequest, EffectRequest, EffectSummary
+from app.schemas import ACTION_SCHEMA, EFFECT_SCHEMA, ActionProposal, ActionRequest, BrowserActionEvent, EffectRequest, EffectSummary
 
 
 def create_app(settings: Settings | None = None,
@@ -66,6 +66,13 @@ def create_app(settings: Settings | None = None,
 
     @app.get("/health")
     async def health():
+        return {"ok": True}
+
+    @app.post("/api/browser-action")
+    async def browser_action(body: BrowserActionEvent):
+        # Local browser navigation bypasses the action model. Log typed lifecycle
+        # events so it remains visible without retaining queries or page contents.
+        logging.getLogger("voice_agent.browser").info("browser action %s -> %s turn=%s", body.kind, body.stage, body.turn_id)
         return {"ok": True}
 
     @app.post("/api/action")

@@ -2,7 +2,7 @@ import { SESSION_KEYS, VERBOSITY_KEY, PENDING_EFFECT_MAX_AGE_MS, decodeScrollRes
 import type { PingResult, FromOffscreen, SnapshotResult, CandidatesResult, ExecuteResult, ExecutedAction, PendingEffectJob, SettleDiffResult, ReadStatusResult } from '../shared/protocol.ts';
 import type { PageDiff, Snapshot } from '../shared/snapshot-format.ts';
 import { parseIntent, isCaptchaLabel } from '../shared/intent.ts';
-import { normalizeNavigationUrl, parseNavigationCommand } from '../shared/navigation.ts';
+import { normalizeNavigationUrl, parseNavigationCommand, navigationTarget } from '../shared/navigation.ts';
 import { googleSearchUrl, isBrowserStartPage, isGoogleSearchPage, isGoogleSearchHome, parseBrowserSearch } from '../shared/browser-search.ts';
 import { wordsToDigits, digitsToSpokenGroups, speakable } from '../shared/polish-speech.ts';
 import { createBudget, takeStep } from '../shared/limits.ts';
@@ -496,6 +496,14 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
       const page: PingResult = await chrome.tabs.sendMessage(tabId, { type: 'PING' }, { frameId: 0 });
       if (page.ok && isGoogleSearchPage(page.url)) search = parseBrowserSearch(text, true, isGoogleSearchHome(page.url));
     } catch { /* No DOM on browser new-tab pages. Explicit browser searches still work. */ }
+  }
+  // "otwórz X" on a blank tab cannot be a page action (there is no page), so an unknown site name is searched instead.
+  if (!search && tabId !== undefined && !parseNavigationCommand(text)) {
+    const target = navigationTarget(text);
+    if (target) try {
+      const tab = await chrome.tabs.get(tabId);
+      if (isBrowserStartPage(tab.url) || (tab.url === undefined && (await blankTabs()).includes(tabId))) search = { query: target, newTab: false, addressBar: false };
+    } catch { /* A tab can disappear while its command is being transcribed. */ }
   }
   if (search) {
     if ('invalid' in search) { await say(msg.SEARCH_QUERY_MISSING); return; }

@@ -46,6 +46,12 @@ export const WAIT_NOTICE = 'To trwa dłużej niż zwykle';
 export const NOTHING_HEARD = 'Nic nie usłyszałem. Spróbuj jeszcze raz.';
 export const PAGE_UNSUPPORTED = 'Tej strony nie obsługuję. Otwórz zwykłą stronę internetową i spróbuj jeszcze raz.';
 export const PAGE_ACCESS_FAILED = 'Nie mam dostępu do tej strony. Odśwież ją i spróbuj jeszcze raz.';
+export const NAVIGATION_INVALID = 'Nie rozpoznałem poprawnego adresu strony. Powiedz na przykład: przejdź na inpost kropka pe el.';
+export const NAVIGATION_FAILED = 'Nie udało się otworzyć strony lub nowej karty. Spróbuj jeszcze raz.';
+export const SEARCH_QUERY_MISSING = 'Powiedz, czego szukasz, na przykład: wyszukaj paczkomaty w Warszawie.';
+export const BROWSER_SEARCHING = 'Otwieram wyniki wyszukiwania.';
+export const NEW_TAB_OPENING = 'Otwieram nową kartę. Możesz podać adres kolejnym poleceniem.';
+export function openingAddress(url: string, newTab: boolean): string { return `${newTab ? 'Otwieram w nowej karcie' : 'Przechodzę na'} ${new URL(url).hostname}.`; }
 export const RELOAD_PAGE = 'Odśwież stronę i spróbuj jeszcze raz.';
 export const MIC_DENIED = 'Brak dostępu do mikrofonu. Otwieram ustawienia wtyczki. Włącz tam mikrofon.';
 export const MIC_NO_DEVICE = 'Nie znalazłem mikrofonu. Podłącz mikrofon i spróbuj jeszcze raz.';

@@ -52,9 +52,9 @@ class Settings:
     chat_model: str = "anthropic/claude-sonnet-5.5"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_timeout_s: float = 15.0
-    action_max_tokens: int = 300
-    effect_max_tokens: int = 150
-    explore_max_tokens: int = 300
+    action_max_tokens: int = 4096
+    effect_max_tokens: int = 2048
+    explore_max_tokens: int = 4096
     stt_mode: Literal["stub", "whisper"] = "stub"
     stt_stub_text: str = "kliknij Znajdź"
     max_body_bytes: int = 2097152
@@ -68,6 +68,12 @@ class Settings:
         def value(key, default=None):
             return environ.get(key) or default
 
+        def token_limit(key, default):
+            limit = int(value(key, str(default)))
+            if not 256 <= limit <= 16384:
+                raise ValueError("invalid_token_limit")
+            return limit
+
         model = value("CHAT_MODEL", cls.chat_model)
         mode = value("STT_MODE", "stub")
         if model.startswith("~") or "latest" in model.casefold():
@@ -79,6 +85,9 @@ class Settings:
             chat_model=model,
             openrouter_base_url=value("OPENROUTER_BASE_URL", cls.openrouter_base_url),
             openrouter_timeout_s=float(value("OPENROUTER_TIMEOUT_S", "15")),
+            action_max_tokens=token_limit("ACTION_MAX_TOKENS", cls.action_max_tokens),
+            effect_max_tokens=token_limit("EFFECT_MAX_TOKENS", cls.effect_max_tokens),
+            explore_max_tokens=token_limit("EXPLORE_MAX_TOKENS", cls.explore_max_tokens),
             stt_mode=mode,
             stt_stub_text=value("STT_STUB_TEXT", cls.stt_stub_text),
             max_body_bytes=int(value("MAX_BODY_BYTES", "2097152")),

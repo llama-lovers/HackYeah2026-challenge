@@ -11,6 +11,17 @@ from conftest import make_client, openrouter_reply
 PROPOSAL = {"action": "click", "target": "e4", "text": "", "needs_confirmation": False, "say": "", "option_1": "", "option_2": "", "option_3": ""}
 BODY = {"utterance": "kliknij Znajdź", "snapshot": 'button e4 "Znajdź"'}
 
+
+def test_other_models_keep_provider_reasoning_defaults():
+    captured = []
+    def handler(request):
+        captured.append(json.loads(request.content))
+        return openrouter_reply(json.dumps(PROPOSAL))
+    with make_client(handler, chat_model="other/model", action_max_tokens=8192) as client:
+        assert client.post("/api/action", json=BODY).status_code == 200
+    assert captured[0]["max_tokens"] == 8192
+    assert "reasoning" not in captured[0]
+
 def test_choose_schema_and_roundtrip():
     assert "choose" in ACTION_SCHEMA["properties"]["action"]["enum"]
     assert all(key in ACTION_SCHEMA["required"] for key in ["option_1", "option_2", "option_3"])
@@ -39,7 +50,8 @@ def test_strict_request_and_polish_utf8():
     assert data["model"] == "anthropic/claude-sonnet-5.5"
     assert data["response_format"] == {"type": "json_schema", "json_schema": {"name": "action_proposal", "strict": True, "schema": ACTION_SCHEMA}}
     assert data["provider"] == {"require_parameters": True}
-    assert data["temperature"] == 0 and data["max_tokens"] == 300 and data["stream"] is False
+    assert data["temperature"] == 0 and data["max_tokens"] == Settings.action_max_tokens and data["stream"] is False
+    assert data["reasoning"] == {"effort": "low"}
     assert BODY["utterance"].encode() in data["messages"][1]["content"].encode()
 
 

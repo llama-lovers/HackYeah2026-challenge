@@ -27,7 +27,7 @@ def test_summary_roundtrip_is_strict_read_only_and_polish_safe():
     assert result.status_code == 200 and result.json() == SUMMARY
     data = captured[0]
     assert data["response_format"] == {"type": "json_schema", "json_schema": {"name": "page_exploration", "strict": True, "schema": EXPLORATION_SCHEMA}}
-    assert data["model"] == "anthropic/claude-sonnet-5.5" and data["max_tokens"] == 300 and data["temperature"] == 0
+    assert data["model"] == "anthropic/claude-sonnet-5.5" and data["max_tokens"] == 4096 and data["temperature"] == 0
     # No action vocabulary can leave through the read-only schema.
     assert set(EXPLORATION_SCHEMA["properties"]) == {"sentences", "candidate_ids"}
     system, user = data["messages"][0]["content"], data["messages"][1]["content"]

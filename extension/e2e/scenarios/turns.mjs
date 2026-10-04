@@ -28,9 +28,13 @@ export async function run(ctx) {
   await ctx.openPage('about:blank');
   await ctx.swEval(`globalThis.__ttsLog=[];globalThis.__realTts=chrome.tts.speak;chrome.tts.speak=(text,options)=>__ttsLog.push({text,options});`);
   try {
+    // Blank pages now accept browser commands without a content script.
+    await ctx.toggle({ stubText: `przejdź na ${ctx.proxyOrigin}/fixtures/tracking-form.html` });
+    await waitFor(async () => (await ctx.turnState()).phase === 'recording', { label: 'blank page records browser command' });
+    assert.equal((await ctx.swEval('globalThis.__ttsLog')).some(s => s.text.includes('Tej strony nie obsługuję')), false);
+    await new Promise(resolve => setTimeout(resolve, 800));
     await ctx.toggle();
-    assert((await ctx.swEval('globalThis.__ttsLog')).some(s => s.text === 'Tej strony nie obsługuję. Otwórz zwykłą stronę internetową i spróbuj jeszcze raz.' && s.options.lang === 'pl-PL'));
-    assert.equal((await ctx.turnState()).phase, 'idle');
+    await ctx.waitIdle();
   } finally { await ctx.swEval('chrome.tts.speak=__realTts;delete globalThis.__realTts;'); }
   page = await ctx.openPage('/fixtures/tracking-form.html');
   // Automatic stop has no explicit REC_STOP test payload. Override only the test

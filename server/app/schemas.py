@@ -37,6 +37,12 @@ class ActionRequest(StrictModel):
     snapshot: str = Field(min_length=1, max_length=60000)
 
 
+class BrowserActionEvent(StrictModel):
+    kind: Literal["search", "navigate", "new_tab"]
+    stage: Literal["requested", "started", "failed"]
+    turn_id: str = Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$")
+
+
 class ActionProposal(StrictModel):
     action: Literal["click", "fill", "choose", "none"]
     option_1: str = Field(default="", max_length=32)

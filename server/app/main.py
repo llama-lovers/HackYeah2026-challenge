@@ -20,7 +20,7 @@ from app.middleware import AccessLogMiddleware, BodyLimitMiddleware, OriginGuard
 from app.exploration import EXPLORATION_SCHEMA, ExplorationRequest, build_exploration_messages, validate_exploration_output
 from app.openrouter import UpstreamError, chat_json, warm_up
 from app.prompts import build_action_messages, build_effect_messages
-from app.schemas import ACTION_SCHEMA, EFFECT_SCHEMA, ActionProposal, ActionRequest, EffectRequest, EffectSummary
+from app.schemas import ACTION_SCHEMA, EFFECT_SCHEMA, ActionProposal, ActionRequest, BrowserActionEvent, EffectRequest, EffectSummary
 from app.speech import SpeechRequest, synthesize
 
 
@@ -81,6 +81,13 @@ def create_app(settings: Settings | None = None,
             return JSONResponse({"error": "tts_timeout"}, status_code=504)
         except (httpx.HTTPError, ValueError):
             return JSONResponse({"error": "tts_unavailable"}, status_code=502)
+
+    @app.post("/api/browser-action")
+    async def browser_action(body: BrowserActionEvent):
+        # Local browser navigation bypasses the action model. Log typed lifecycle
+        # events so it remains visible without retaining queries or page contents.
+        logging.getLogger("voice_agent.browser").info("browser action %s -> %s turn=%s", body.kind, body.stage, body.turn_id)
+        return {"ok": True}
 
     @app.post("/api/action")
     async def action(body: ActionRequest):

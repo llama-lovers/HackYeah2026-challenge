@@ -14,7 +14,7 @@ import type { Proposal, ConfirmCategory } from '../shared/validate.ts';
 import { onToggle, isStale, toProcessing, waitDecision } from '../shared/turn.ts';
 import type { TurnState } from '../shared/turn.ts';
 import { maskText } from '../shared/mask.ts';
-import { parseConversationCommand, savesForReplay, makeReplay, decodeReplay, decodeAnnounceAck, decodeStoredVerbosity, moveVerbosity } from '../shared/conversation.ts';
+import { isStopPhrase, parseConversationCommand, savesForReplay, makeReplay, decodeReplay, decodeAnnounceAck, decodeStoredVerbosity, moveVerbosity } from '../shared/conversation.ts';
 import type { OutputIntent, VerbosityDirection } from '../shared/conversation.ts';
 import type { ScrollDirection } from '../shared/protocol.ts';
 import type { Verbosity } from '../shared/protocol.ts';
@@ -26,7 +26,10 @@ let creating: Promise<void> | undefined;
 export async function getTurn(): Promise<TurnState> {
   return (await chrome.storage.session.get(SESSION_KEYS.turn))[SESSION_KEYS.turn] as TurnState | undefined ?? { phase: 'idle', startedAt: Date.now() };
 }
-export async function setTurn(turn: TurnState): Promise<void> { await chrome.storage.session.set({ [SESSION_KEYS.turn]: turn }); }
+let currentOwner: TurnState | undefined;
+const cancelled = new Set<string>();
+let generation = 0;
+export async function setTurn(turn: TurnState): Promise<void> { currentOwner = turn; await chrome.storage.session.set({ [SESSION_KEYS.turn]: turn }); }
 export async function resetTurn(): Promise<void> { clearWaits(); await setTurn({ phase: 'idle', startedAt: Date.now() }); }
 export async function ensureOffscreen(): Promise<void> {
   if (creating) return creating;
@@ -122,12 +125,26 @@ function turnSignal(id: string): AbortSignal {
   if (!controller) { controller = new AbortController(); controllers.set(id, controller); }
   return controller.signal;
 }
-function abortTurn(id: string | undefined): void { if (id) { controllers.get(id)?.abort(); controllers.delete(id); clearWaits(id); } }
+function abortTurn(id: string | undefined): void { if (id) { cancelled.add(id); controllers.get(id)?.abort(); clearWaits(id); } }
+// Urgent lane: invalidate in memory and release browser resources before waiting for stored-state serialization.
+export function handleStop(): Promise<void> {
+  generation++;
+  chrome.tts.stop();
+  for (const [id, controller] of controllers) { cancelled.add(id); controller.abort(); }
+  abortTurn(currentOwner?.id); clearWaits();
+  void chrome.runtime.sendMessage({ target: 'offscreen', type: 'REC_DISCARD' }).catch(() => {});
+  return runSerial(async () => {
+    const turn = await getTurn(); abortTurn(turn.id);
+    await chrome.storage.session.remove(SESSION_KEYS.pending);
+    await chrome.storage.session.remove(SESSION_KEYS.pendingEffect);
+    await resetTurn();
+  });
+}
 // First line of a turn's answer: the claim is serialized with the wait notice, so a notice that is due at the same moment as an answer is either
 // delivered strictly before the answer or suppressed, never after it. It also tells a stale caller (replaced, closed or aborted turn) to stay silent.
 async function claimOutput(turnId: string): Promise<boolean> {
   const turn = await getTurn();
-  if (turnSignal(turnId).aborted || turn.id !== turnId) return false;
+  if (cancelled.has(turnId) || turnSignal(turnId).aborted || turn.id !== turnId) return false;
   if (turn.phase === 'processing' && !turn.outputClaimed) await setTurn({ ...turn, outputClaimed: true });
   return true;
 }
@@ -160,22 +177,26 @@ export function fireWait(turnId: string): Promise<void> {
 // Called when the worker starts: a processing turn that survived a worker restart keeps its original deadline.
 export function rehydrateWait(): Promise<void> { return runSerial(async () => { armWait(await getTurn()); }); }
 // Simulates the loss of everything in worker memory (a killed worker) for tests; stored state is untouched.
-export function forgetWorkerMemory(): void { clearWaits(); }
+export function forgetWorkerMemory(): void { clearWaits(); currentOwner = undefined; cancelled.clear(); controllers.clear(); }
 export async function resetTurnIf(id: string | undefined): Promise<void> { if ((await getTurn()).id === id) await resetTurn(); }
-export function handleToggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promise<void> { return runSerial(() => toggle(tab, opts)).catch(() => { speakTts(msg.STORAGE_FAILED); }); }
+export function handleToggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promise<void> {
+  if (currentOwner?.phase === 'processing' && !isStale(currentOwner, Date.now())) return handleStop();
+  return runSerial(() => toggle(tab, opts)).catch(() => { speakTts(msg.STORAGE_FAILED); });
+}
 async function toggle(tab: chrome.tabs.Tab, opts?: { stubText?: string }): Promise<void> {
   if (tab.id === undefined) return;
   const state = await getTurn();
   const { next, effect } = onToggle(state, tab.id, Date.now());
-  if (effect === 'busy') { await announce(tab.id, msg.BUSY, 'status'); return; }
+  if (effect === 'busy') { void handleStop(); return; }
   if (effect === 'start') {
     if (__E2E__ && opts?.stubText !== undefined) next.stubText = opts.stubText;
     // Stale recovery: cancel the abandoned turn (requests, pending effect job) before a replacement may start.
     if (state.phase !== 'idle') { abortTurn(state.id); await chrome.storage.session.remove(SESSION_KEYS.pendingEffect); }
     // Reserve the recording owner before any asynchronous setup; failures only release this reservation.
     await setTurn(next);
+    const startGeneration = generation;
     if (!(await preparePageAccess(tab))) { await resetTurnIf(next.id); return; }
-    try { await ensureOffscreen(); await chrome.runtime.sendMessage({ target: 'offscreen', type: 'REC_START', turnId: next.id }); }
+    try { await ensureOffscreen(); if (startGeneration !== generation || cancelled.has(next.id!)) return; await chrome.runtime.sendMessage({ target: 'offscreen', type: 'REC_START', turnId: next.id }); }
     catch { await announce(tab.id, msg.MIC_FAILED, 'status'); await resetTurnIf(next.id); }
   } else {
     await setTurn(next); armWait(next);
@@ -197,7 +218,7 @@ async function failTurn(turnId: string, tabId: number | undefined, text: string)
 async function onOffscreen(message: FromOffscreen): Promise<(() => Promise<void>) | void> {
   const turn = await getTurn();
   // Events of a turn that no longer owns the pipeline (recovered, replaced or finished) are dropped silently.
-  if (turn.phase === 'idle' || !turn.id || message.turnId !== turn.id) return;
+  if (turn.phase === 'idle' || !turn.id || cancelled.has(turn.id) || message.turnId !== turn.id) return;
   // Once the transcript is accepted the command owns the turn: a duplicated or late STT event must not start a second command or add an error.
   if (turn.commandStarted && ['TRANSCRIPT', 'TRANSCRIBE_ERROR', 'MIC_ERROR'].includes(message.type)) return;
   // After a worker restart the in-memory timer is gone; any event of the owning turn restores it from the stored deadline.
@@ -226,7 +247,7 @@ async function onOffscreen(message: FromOffscreen): Promise<(() => Promise<void>
 const JOB = SESSION_KEYS.pendingEffect;
 async function getJob(): Promise<PendingEffectJob | undefined> { return (await chrome.storage.session.get(JOB))[JOB] as PendingEffectJob | undefined; }
 async function dropJob(id: string): Promise<void> { if ((await getJob())?.id === id) await chrome.storage.session.remove(JOB); }
-async function ownsTurn(turnId: string): Promise<boolean> { return !turnSignal(turnId).aborted && (await getTurn()).id === turnId; }
+async function ownsTurn(turnId: string): Promise<boolean> { const turn = await getTurn(); return !cancelled.has(turnId) && !turnSignal(turnId).aborted && turn.id === turnId; }
 export async function getPending(): Promise<PendingInteraction | undefined> { return (await chrome.storage.session.get(SESSION_KEYS.pending))[SESSION_KEYS.pending] as PendingInteraction | undefined; }
 // 'stale': the turn no longer owns the pipeline (nothing stored); 'failed': storage refused the write. A question is asked only once its answer can be remembered.
 export function setPending(turnId: string, pending: PendingInteraction): Promise<'stored' | 'stale' | 'failed'> {
@@ -401,6 +422,7 @@ async function runActions(run: CommandRun): Promise<void> {
   await say(msg.actionsList(rechecked, incomplete));
 }
 export async function runCommand(turnId: string, tabId: number | undefined, rawText: string): Promise<'handoff' | void> {
+  if (isStopPhrase(rawText)) { await handleStop(); return; }
   const signal = turnSignal(turnId);
   const run: CommandRun = { turnId, tabId: tabId!, signal, budget: createBudget() };
   const say = (text: string, intent: OutputIntent = 'substantive') => speakTurn(turnId, tabId, text, intent);
@@ -484,6 +506,7 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
 // The content script calls this right before it performs a click/fill; only after the acknowledgement does it act.
 export function handleExecuting(tabId: number | undefined, message: { turnId: string; jobId: string }): Promise<boolean> {
   return runSerial(async () => {
+    if (!(await ownsTurn(message.turnId))) return false;
     const [turn, job] = [await getTurn(), await getJob()];
     if (!job || job.id !== message.jobId || job.turnId !== message.turnId || job.tabId !== tabId || job.state !== 'proposed' || turn.id !== message.turnId || turn.phase !== 'processing') return false;
     await chrome.storage.session.set({ [JOB]: { ...job, state: 'executed', startedAt: Date.now() } });

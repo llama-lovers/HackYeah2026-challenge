@@ -37,12 +37,25 @@ const turn = () => pipeline.getTurn() as Promise<any>;
 test('urgent stop discards processing capture and clears pending ownership', async () => {
   store.set('turn', { id: 'stop-owner', tabId: 7, phase: 'processing', startedAt: Date.now() });
   store.set('pending', { tabId: 7 }); store.set('pendingEffect', { turnId: 'stop-owner' });
-  await pipeline.handleToggle({ id: 22 } as chrome.tabs.Tab);
+  await pipeline.handleStop();
   assert.equal((await turn()).phase, 'idle');
   assert.equal(store.has('pending'), false); assert.equal(store.has('pendingEffect'), false);
-  assert(sent.some(m => m.type === 'REC_DISCARD' && m.turnId === 'stop-owner'));
+  assert(sent.some(m => m.type === 'REC_DISCARD'));
 });
-beforeEach(() => { store.clear(); localStore.clear(); localFault.read = false; localFault.write = false; localFault.writes = 0; sent.length = 0; spoken.length = 0; tabCalls.length = 0; injected.length = 0; tabHandler = () => ({ ok: true }); injectHandler = () => [{ result: undefined }]; });
+test('complete spoken stop is local while substring dictation reaches the model', async () => {
+  let requests = 0;
+  g.fetch = async () => { requests++; return { ok: true, json: async () => ({ action: 'none', target: '', text: '', needs_confirmation: false, say: 'Gotowe.' }) }; };
+  tabHandler = (_tab, m) => m.type === 'SNAPSHOT' ? { ok: true, docId: 'doc', snapshot: { epoch: 1, nodes: [], path: '/', title: '', truncated: false } } : { ok: true };
+  for (const text of [' STOP! ', 'zatrzymaj']) {
+    await pipeline.setTurn({ id: text, tabId: 7, phase: 'processing', startedAt: Date.now() });
+    await pipeline.runCommand(text, 7, text);
+    assert.equal(requests, 0); assert.equal((await turn()).phase, 'idle');
+  }
+  await pipeline.setTurn({ id: 'dictation', tabId: 7, phase: 'processing', startedAt: Date.now() });
+  await pipeline.runCommand('dictation', 7, 'wpisz stop w pole');
+  assert.equal(requests, 1);
+});
+beforeEach(() => { pipeline.forgetWorkerMemory(); store.clear(); localStore.clear(); localFault.read = false; localFault.write = false; localFault.writes = 0; sent.length = 0; spoken.length = 0; tabCalls.length = 0; injected.length = 0; tabHandler = () => ({ ok: true }); injectHandler = () => [{ result: undefined }]; });
 
 test('rapid shortcut presses start then stop one recording and keep its owner (CR-05)', async () => {
   await Promise.all([pipeline.handleToggle({ id: 7, url: 'https://example.com/' } as chrome.tabs.Tab), pipeline.handleToggle({ id: 22, url: 'https://example.com/' } as chrome.tabs.Tab)]);

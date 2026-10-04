@@ -21,6 +21,7 @@ const SCROLL_PHRASES: Record<ScrollDirection, Set<string>> = {
 export function normalizePhrase(text: string): string {
   return foldPolish(text).replace(/[.,!?;:"'„”…]/gu, ' ').replace(/\s+/gu, ' ').trim();
 }
+export function isStopPhrase(text: string): boolean { return ['stop', 'zatrzymaj'].includes(normalizePhrase(text)); }
 export function parseConversationCommand(text: string): ConversationCommand | null {
   const s = normalizePhrase(text);
   if (REPEAT_PHRASES.has(s)) return { kind: 'repeat' };

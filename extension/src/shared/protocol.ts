@@ -2,6 +2,7 @@ import type { Proposal, RejectReason, ConfirmCategory } from './validate.ts';
 import type { Snapshot, PageDiff } from './snapshot-format.ts';
 export const LIVE_REGION_ID = 'voice-agent-live-region';
 export const COMMAND_TOGGLE = 'toggle-listening';
+export const COMMAND_STOP = 'stop-listening';
 export const SESSION_KEYS = { turn: 'turn', pendingEffect: 'pendingEffect', pending: 'pending', lastResponse: 'lastResponse' } as const;
 export const PENDING_EFFECT_MAX_AGE_MS = 15000;
 // The only durable conversation setting: one validated enum in chrome.storage.local. Never a transcript, page text or replay text.
@@ -44,7 +45,7 @@ export type RecheckResult = { ok: true; candidates: ExplorationCandidate[] } | {
 export type SettleDiffResult = { ok: true; diff: PageDiff } | { ok: false; error: 'snapshot_failed' };
 export type FromContent = { type: 'READY' } | { type: 'EXECUTING'; turnId: string; jobId: string };
 // Every recording command and offscreen event carries the immutable id of the turn that owns it, so late events can be ignored.
-export type ToOffscreen = { target: 'offscreen'; type: 'REC_START'; turnId: string } | { target: 'offscreen'; type: 'REC_STOP'; turnId: string; stubText?: string };
+export type ToOffscreen = { target: 'offscreen'; type: 'REC_START'; turnId: string } | { target: 'offscreen'; type: 'REC_STOP'; turnId: string; stubText?: string } | { target: 'offscreen'; type: 'REC_DISCARD'; turnId?: string };
 // Typed failure categories only: the offscreen document never forwards provider text, exception text or response bodies.
 export const STT_ERROR_CODES = ['stt_failed', 'stt_timeout', 'stt_invalid', 'not_configured', 'network', 'not_recording'] as const;
 export const MIC_ERROR_CODES = ['not_allowed', 'no_device', 'other'] as const;

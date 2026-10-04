@@ -1,5 +1,5 @@
 import { COMMAND_TOGGLE, isFromOffscreen } from '../shared/protocol.ts';
-import { getTurn, handleToggle, handleOffscreenMessage, handleReady, handleExecuting, handleTabRemoved, rehydrateWait } from './pipeline.ts';
+import { getTurn, handleStop, handleToggle, handleOffscreenMessage, handleReady, handleExecuting, handleTabRemoved, rehydrateWait } from './pipeline.ts';
 chrome.commands.onCommand.addListener((command, tab) => {
   if (command === COMMAND_TOGGLE && tab?.id !== undefined) void handleToggle(tab);
 });
@@ -19,6 +19,7 @@ chrome.runtime.onInstalled.addListener(details => {
 });
 if (__E2E__) {
   Object.assign(globalThis, { __voiceAgentTest: {
+    stop: handleStop,
     async toggle(opts?: { stubText?: string }) {
       const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
       if (tab) await handleToggle(tab, opts);

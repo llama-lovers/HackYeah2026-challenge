@@ -10,6 +10,13 @@ class Gain extends Node { gain = new Param(); }
 class FakeContext { currentTime = 0; destination = {}; closed = false; tones: Tone[] = []; gains: Gain[] = []; constructor() { contexts.push(this); } resume() { return holdResume?.() ?? Promise.resolve(); } async close() { this.closed = true; } createOscillator() { const tone = new Tone(); this.tones.push(tone); return tone; } createGain() { const gain = new Gain(); this.gains.push(gain); return gain; } }
 Object.assign(globalThis, { AudioContext: FakeContext });
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+test('five lifecycle cues have distinct bounded contour and rhythm signatures', () => {
+  const patterns = Object.values(EARCON_PATTERNS);
+  assert.equal(patterns.length, 5);
+  assert.equal(new Set(patterns.map(p => JSON.stringify(p))).size, 5);
+  assert.equal(new Set(patterns.map(p => JSON.stringify(p.map(n => [n.at, n.duration, Math.sign(n.to - n.from)])))).size, 5);
+  for (const pattern of patterns) { const end = Math.max(...pattern.map(n => n.at + n.duration)); assert(end >= 0.08 && end <= 0.3); }
+});
 test('mic cues have distinct finite timelines and disconnect every source on completion', async () => {
   assert.notDeepEqual(EARCON_PATTERNS.mic_open, EARCON_PATTERNS.mic_close);
   for (const kind of ['mic_open', 'mic_close'] as const) {

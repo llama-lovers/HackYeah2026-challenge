@@ -58,7 +58,8 @@ export const STT_ERROR_CODES = ['stt_failed', 'stt_timeout', 'stt_invalid', 'not
 export const MIC_ERROR_CODES = ['not_allowed', 'no_device', 'other'] as const;
 export type SttErrorCode = typeof STT_ERROR_CODES[number];
 export type MicErrorCode = typeof MIC_ERROR_CODES[number];
-export type FromOffscreenBody = { type: 'MIC_OPEN' } | { type: 'REC_STOPPED' } | { type: 'TRANSCRIPT'; text: string } | { type: 'TRANSCRIBE_ERROR'; code: SttErrorCode } | { type: 'MIC_ERROR'; code: MicErrorCode };
+export type RecordingCompletion = 'toggle' | 'silence' | 'cap';
+export type FromOffscreenBody = { type: 'MIC_OPEN'; cuePlayed?: boolean } | { type: 'REC_STOPPED'; reason?: RecordingCompletion; closeCuePlayed?: boolean } | { type: 'TRANSCRIPT'; text: string } | { type: 'TRANSCRIBE_ERROR'; code: SttErrorCode } | { type: 'MIC_ERROR'; code: MicErrorCode };
 export type FromOffscreen = { target: 'sw'; turnId: string } & FromOffscreenBody;
 export function isFromOffscreen(m: unknown): m is FromOffscreen {
   if (typeof m !== 'object' || m === null) return false;

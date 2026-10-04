@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { STT_FAILED } from '../../src/shared/messages.pl.ts';
 import { RECORDING_CAP_MS } from '../../src/shared/limits.ts';
 import { waitForTarget, attach, evaluate } from '../cdp.mjs';
+import { captureAssertions } from './audio.mjs';
 export const name = 'wav';
 export const timeoutMs = 60000;
 export const buildEnv = { AUDIO_FORMAT: 'wav' };
@@ -10,6 +11,7 @@ export async function run(ctx) {
   await ctx.speak(page, 'kliknij Znajdź');
   await ctx.waitForLive(page, 'Klikam Znajdź.');
   await ctx.waitIdle();
+  await captureAssertions(ctx, page);
   assert(!(await ctx.liveLog(page)).includes(STT_FAILED));
   assert.match(ctx.proxyOutput(), /POST \/api\/transcribe -> 200/);
   const target = await waitForTarget(ctx.browser.port, target => target.url.endsWith('/offscreen/offscreen.html'));

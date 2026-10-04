@@ -7,6 +7,13 @@ export const SESSION_KEYS = { turn: 'turn', pendingEffect: 'pendingEffect', pend
 export const PENDING_EFFECT_MAX_AGE_MS = 15000;
 // The only durable conversation setting: one validated enum in chrome.storage.local. Never a transcript, page text or replay text.
 export const VERBOSITY_KEY = 'verbosity';
+export type OutputRequest = { type: 'OUTPUT'; turnId: string; docId: string; generation: number; text: string; intent: 'pre_action' };
+export function decodeOutputRequest(value: unknown): OutputRequest | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  if (v.type !== 'OUTPUT' || v.intent !== 'pre_action' || typeof v.text !== 'string' || !v.text.trim() || v.text.length > 2000 || typeof v.turnId !== 'string' || !v.turnId || v.turnId.length > 64 || typeof v.docId !== 'string' || !v.docId || v.docId.length > 64 || !Number.isSafeInteger(v.generation) || (v.generation as number) < 0) return undefined;
+  return { type: 'OUTPUT', turnId: v.turnId, docId: v.docId, generation: v.generation as number, text: v.text, intent: 'pre_action' };
+}
 export type ToContent = { type: 'CANCEL_OUTPUT'; generation: number } | { type: 'PING' } | { type: 'SNAPSHOT' } | { type: 'EXECUTE'; epoch: number; proposal: Proposal; turnId: string; jobId: string; docId: string; generation?: number; confirmed?: boolean; context?: string } | { type: 'ANNOUNCE'; text: string; generation?: number } | { type: 'SETTLE_DIFF'; preSnapshot: Snapshot } | { type: 'READ_STATUS'; number: string } | { type: 'CANDIDATES' } | { type: 'RECHECK_CANDIDATES'; docId: string; epoch: number; ids: string[] } | ScrollRequest;
 // Delivery acknowledgement of an ANNOUNCE: sent only after the live-region mutation happened, and it names the document that spoke.
 export type AnnounceResult = { ok: true; docId: string };

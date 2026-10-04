@@ -91,4 +91,45 @@ export async function run(ctx) {
   await stop(ctx); await ctx.waitIdle();
   assert.equal(await actionPage.evaluate('globalThis.__clickCount'), 1, 'stop does not undo an already committed click');
   assert(!(await ctx.liveLog(actionPage)).some(t => /cofn|odwróci/iu.test(t)));
+  // Deterministic TTS adapter exercises terminal-event ownership; this does not assert audible Polish voice quality.
+  await ctx.swEval(`(() => {
+    globalThis.__ttsLines = []; globalThis.__realTts = chrome.tts.speak; globalThis.__realVoices = chrome.tts.getVoices;
+    chrome.tts.getVoices = async () => [{ lang: 'pl-PL', voiceName: 'Test Polish voice', remote: true }];
+    chrome.tts.speak = (text, opts) => { globalThis.__ttsLines.push(text); if (text.startsWith('Klikam')) globalThis.__ttsEnd = opts.onEvent; else setTimeout(() => opts.onEvent({ type: 'end' }), 10); return Promise.resolve(); };
+    return chrome.storage.local.set({ outputMode: 'browser_tts' }).then(() => true);
+  })()`);
+  await ctx.waitIdle();
+  await ctx.client.send('Page.bringToFront', {}, actionPage.sessionId);
+  const liveBefore = (await ctx.liveLog(actionPage)).length;
+  await ctx.toggle({ stubText: 'kliknij Znajdź' });
+  await new Promise(resolve => setTimeout(resolve, 900)); await ctx.toggle();
+  await waitFor(() => ctx.swEval('!!globalThis.__ttsEnd'), { label: 'TTS pre-action completion gate' });
+  assert.equal(await actionPage.evaluate('globalThis.__clickCount'), 1, 'pre-action waits for terminal TTS');
+  assert.deepEqual((await ctx.liveLog(actionPage)).slice(liveBefore), [], 'browser route writes no page live text');
+  await stop(ctx); await ctx.swEval(`globalThis.__ttsEnd({ type: 'end' }); globalThis.__ttsEnd = undefined; true`);
+  await new Promise(resolve => setTimeout(resolve, 500));
+  assert.equal(await actionPage.evaluate('globalThis.__clickCount'), 1, 'late TTS end cannot authorize action');
+  // A route change cancels the same awaiting action and retains screen-reader mode.
+  await ctx.toggle({ stubText: 'kliknij Znajdź' }); await new Promise(resolve => setTimeout(resolve, 900)); await ctx.toggle();
+  await waitFor(() => ctx.swEval('!!globalThis.__ttsEnd'), { label: 'TTS before route change' });
+  await ctx.swEval("chrome.storage.local.set({ outputMode: 'screen_reader' }).then(() => true)"); await ctx.waitIdle();
+  await ctx.swEval(`globalThis.__ttsEnd({ type: 'end' }); true`);
+  assert.equal(await actionPage.evaluate('globalThis.__clickCount'), 1);
+  await ctx.swEval(`chrome.tts.speak = globalThis.__realTts; chrome.tts.getVoices = globalThis.__realVoices; globalThis.__ttsCount = 0; chrome.tts.speak = () => { globalThis.__ttsCount++; }; true`);
+  // Unsupported-page recovery stays inside the trusted extension document and never silently invokes TTS.
+  await ctx.openPage('chrome://version/'); await ctx.toggle(); await ctx.waitIdle();
+  const options = await attach(ctx.client, (await waitForTarget(ctx.browser.port, t => t.url === `chrome-extension://${ctx.extensionId}/options/options.html`)).id);
+  await waitFor(() => evaluate(ctx.client, options, `document.activeElement?.id === 'output-recovery' && document.querySelector('#output-recovery').getAttribute('role') === 'alert'`), { label: 'focused trusted recovery alert' });
+  assert.match(await evaluate(ctx.client, options, `document.querySelector('#output-recovery').textContent`), /Tej strony nie obsługuję/u);
+  assert.equal(await ctx.swEval('globalThis.__ttsCount'), 0);
+  assert.equal((await ctx.swEval("chrome.storage.session.get('outputRecovery')")).outputRecovery, 'page_unsupported');
+  await evaluate(ctx.client, options, `document.querySelector('#ack-recovery').click(); true`);
+  await waitFor(() => ctx.swEval("chrome.storage.session.get('outputRecovery').then(s => s.outputRecovery === undefined)"), { label: 'recovery acknowledged' });
+  await ctx.swEval("globalThis.__voiceAgentTest.announce(2147483647, 'Untrusted missing-context text').then(() => true)");
+  await waitFor(() => evaluate(ctx.client, options, `document.activeElement?.id === 'output-recovery' && !document.querySelector('#output-recovery').hidden`), { label: 'missing receiver trusted recovery' });
+  assert.equal((await ctx.swEval("chrome.storage.session.get('outputRecovery')")).outputRecovery, 'page_access');
+  assert(!(await evaluate(ctx.client, options, `document.body.textContent`)).includes('Untrusted missing-context text'));
+  assert.equal(await ctx.swEval('globalThis.__ttsCount'), 0);
+  await evaluate(ctx.client, options, `document.querySelector('#ack-recovery').click(); true`);
+  await ctx.swEval('chrome.tts.speak = globalThis.__realTts; true');
 }

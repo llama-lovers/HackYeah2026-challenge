@@ -146,6 +146,16 @@ export const NOT_RECORDING = 'Nagranie nie powiodło się. Naciśnij skrót i sp
 export const MIC_FAILED = 'Nie udało się uruchomić mikrofonu. Zamknij inne programy, które go używają, i spróbuj jeszcze raz.';
 export const STORAGE_FAILED = 'Nie udało się zapisać stanu rozmowy. Spróbuj jeszcze raz.';
 export const PIPELINE_FAILED = 'Coś poszło nie tak. Spróbuj jeszcze raz.';
+export const OUTPUT_RECOVERY_TEXTS = {
+  page_unsupported: PAGE_UNSUPPORTED,
+  page_access: PAGE_ACCESS_FAILED,
+  voice_unavailable: 'Nie ma dostępnego polskiego głosu. Używam czytnika ekranu. Wybierz głos polski w ustawieniach systemu i spróbuj jeszcze raz.',
+  voice_failed: 'Głos przeglądarki nie odtworzył komunikatu. Używam czytnika ekranu. Spróbuj ponownie.',
+  storage: STORAGE_FAILED,
+};
+export const STOP_LATENCY = 'Skrót zatrzymania działa natychmiast. Polecenie „stop” lub „zatrzymaj” działa dopiero po zakończeniu nagrania i rozpoznaniu mowy.';
+export const OUTPUT_SAVED = 'Zapisano sposób odczytywania komunikatów.';
+export const OUTPUT_SAVE_FAILED = 'Nie udało się zapisać ustawienia. Spróbuj jeszcze raz.';
 // One fixed sentence per typed category; raw provider text, exception text, URLs and page content are never interpolated.
 export const STT_FAILURES: Record<SttErrorCode, string> = { stt_failed: STT_FAILED, stt_timeout: STT_TIMEOUT, stt_invalid: STT_INVALID, not_configured: NOT_CONFIGURED, network: NETWORK_FAILED, not_recording: NOT_RECORDING };
 export const MIC_FAILURES: Record<MicErrorCode, string> = { not_allowed: MIC_DENIED, no_device: MIC_NO_DEVICE, other: MIC_FAILED };

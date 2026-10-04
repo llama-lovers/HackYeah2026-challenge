@@ -869,7 +869,8 @@ test('scroll phrases send one SCROLL request bound to turn, tab, document and fr
   scrollAdapter(() => moved());
   const id = crypto.randomUUID(); store.set('turn', { phase: 'processing', tabId: 7, startedAt: Date.now(), id });
   await pipeline.runCommand(id, 7, 'Przewiń w dół.');
-  assert.deepEqual(scrollRequests(), [{ type: 'SCROLL', direction: 'down', turnId: id, tabId: 7, docId: 'doc-1', frameId: 0 }]);
+  assert(Number.isSafeInteger(scrollRequests()[0].generation));
+  assert.deepEqual(scrollRequests().map(({ generation, ...request }) => request), [{ type: 'SCROLL', direction: 'down', turnId: id, tabId: 7, docId: 'doc-1', frameId: 0 }]);
   assert.equal(tabCalls.find(c => c.message.type === 'SCROLL')!.tabId, 7);
   assert.deepEqual(announced(), ['Przewinąłem w dół.']); untouched();
 });

@@ -7,14 +7,14 @@ export const SESSION_KEYS = { turn: 'turn', pendingEffect: 'pendingEffect', pend
 export const PENDING_EFFECT_MAX_AGE_MS = 15000;
 // The only durable conversation setting: one validated enum in chrome.storage.local. Never a transcript, page text or replay text.
 export const VERBOSITY_KEY = 'verbosity';
-export type ToContent = { type: 'PING' } | { type: 'SNAPSHOT' } | { type: 'EXECUTE'; epoch: number; proposal: Proposal; turnId: string; jobId: string; docId: string; confirmed?: boolean; context?: string } | { type: 'ANNOUNCE'; text: string } | { type: 'SETTLE_DIFF'; preSnapshot: Snapshot } | { type: 'READ_STATUS'; number: string } | { type: 'CANDIDATES' } | { type: 'RECHECK_CANDIDATES'; docId: string; epoch: number; ids: string[] } | ScrollRequest;
+export type ToContent = { type: 'CANCEL_OUTPUT'; generation: number } | { type: 'PING' } | { type: 'SNAPSHOT' } | { type: 'EXECUTE'; epoch: number; proposal: Proposal; turnId: string; jobId: string; docId: string; generation?: number; confirmed?: boolean; context?: string } | { type: 'ANNOUNCE'; text: string; generation?: number } | { type: 'SETTLE_DIFF'; preSnapshot: Snapshot } | { type: 'READ_STATUS'; number: string } | { type: 'CANDIDATES' } | { type: 'RECHECK_CANDIDATES'; docId: string; epoch: number; ids: string[] } | ScrollRequest;
 // Delivery acknowledgement of an ANNOUNCE: sent only after the live-region mutation happened, and it names the document that spoke.
 export type AnnounceResult = { ok: true; docId: string };
 export type PingResult = { ok: true; docId?: string };
 // Voice scrolling of the top-level document. The request is bound to the turn, tab, document and frame 0 that asked; the result is measured
 // by the page, never assumed: moved, already at the boundary, or unsupported (the visible content does not live in the document scroller).
 export type ScrollDirection = 'down' | 'up' | 'top';
-export type ScrollRequest = { type: 'SCROLL'; direction: ScrollDirection; turnId: string; tabId: number; docId: string; frameId: 0 };
+export type ScrollRequest = { type: 'SCROLL'; direction: ScrollDirection; turnId: string; tabId: number; docId: string; frameId: 0; generation?: number };
 export type ScrollOutcome = 'moved' | 'boundary' | 'unsupported';
 export type ScrollResult = { ok: true; docId: string; outcome: ScrollOutcome; before: number; after: number; max: number } | { ok: false; reason: 'stale' | 'invalid' };
 export function decodeScrollRequest(m: unknown): ScrollRequest | null {
@@ -23,7 +23,7 @@ export function decodeScrollRequest(m: unknown): ScrollRequest | null {
   if (v.type !== 'SCROLL' || !['down', 'up', 'top'].includes(v.direction as string)) return null;
   if (typeof v.turnId !== 'string' || !v.turnId || v.turnId.length > 64 || typeof v.docId !== 'string' || !v.docId || v.docId.length > 64) return null;
   if (typeof v.tabId !== 'number' || !Number.isSafeInteger(v.tabId) || v.frameId !== 0) return null;
-  return { type: 'SCROLL', direction: v.direction as ScrollDirection, turnId: v.turnId, tabId: v.tabId, docId: v.docId, frameId: 0 };
+  return { type: 'SCROLL', direction: v.direction as ScrollDirection, turnId: v.turnId, tabId: v.tabId, docId: v.docId, frameId: 0, ...(typeof v.generation === 'number' ? { generation: v.generation } : {}) };
 }
 // The reply crosses a runtime message boundary: shape, numbers and the echoed document id are checked before anything is spoken from it.
 export function decodeScrollResult(m: unknown, expectedDocId: string): ScrollResult | null {

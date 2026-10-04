@@ -14,9 +14,14 @@ const globals = globalThis as typeof globalThis & { __voiceAgentInitialized?: bo
 if (!globals.__voiceAgentInitialized) {
   globals.__voiceAgentInitialized = true;
   const announcer = createAnnouncer(document);
+  let cancelledThrough = -1;
+  const alive = (generation: number | undefined) => Number.isSafeInteger(generation) && generation! > cancelledThrough;
   chrome.runtime.onMessage.addListener((message: ToContent, sender, respond) => {
-    if (sender.id !== chrome.runtime.id) return;
+    if (sender.id !== chrome.runtime.id || sender.tab !== undefined) return;
     switch (message.type) {
+      case 'CANCEL_OUTPUT':
+        if (Number.isSafeInteger(message.generation) && message.generation >= 0) { cancelledThrough = Math.max(cancelledThrough, message.generation); announcer.cancel(message.generation); }
+        respond({ ok: true }); break;
       case 'READ_STATUS':
         if (!isParcelDigits(message.number)) { respond({ ok: false, error: 'invalid_number' }); break; }
         void waitForParcelStatus(document, message.number).then(respond).catch(() => respond({ ok: false, error: 'not_found' }));
@@ -24,8 +29,8 @@ if (!globals.__voiceAgentInitialized) {
       case 'PING': respond({ ok: true, docId: getDocumentId() }); break;
       case 'ANNOUNCE':
         // The acknowledgement follows the queued live-region mutation, so the worker may treat the text as delivered.
-        if (typeof message.text !== 'string') { respond({ ok: false }); break; }
-        void announcer.announce(message.text).then(() => respond({ ok: true, docId: getDocumentId() }), () => respond({ ok: false }));
+        if (typeof message.text !== 'string' || message.text.length > 2000 || !alive(message.generation)) { respond({ ok: false }); break; }
+        void announcer.announce(message.text, message.generation).then(result => respond({ ok: result === 'delivered' && alive(message.generation), docId: getDocumentId() }), () => respond({ ok: false }));
         return true;
       case 'SNAPSHOT':
         try { respond({ ok: true, snapshot: takeSnapshot(document, { excludeRoot: announcer.host }), docId: getDocumentId() }); }
@@ -50,19 +55,22 @@ if (!globals.__voiceAgentInitialized) {
         // Only the worker (no tab sender) may ask, only for the top-level document it named, and a reload in between makes the request stale.
         const request = decodeScrollRequest(message);
         if (!request || sender.tab !== undefined || window !== window.top) { respond({ ok: false, reason: 'invalid' }); break; }
-        if (request.docId !== getDocumentId()) { respond({ ok: false, reason: 'stale' }); break; }
+        if (request.docId !== getDocumentId() || !alive(request.generation)) { respond({ ok: false, reason: 'stale' }); break; }
         void (async () => {
-          await announcer.announce(SCROLL_PRE);
+          const result = await announcer.announce(SCROLL_PRE, request.generation);
+          if (result !== 'delivered' || !alive(request.generation)) return { ok: false, reason: 'stale' };
+          const ack = await chrome.runtime.sendMessage({ type: 'EXECUTING', turnId: request.turnId, jobId: 'scroll', docId: request.docId, generation: request.generation });
+          if (!ack?.ok || !alive(request.generation)) return { ok: false, reason: 'stale' };
           return scrollDocument(request.direction, { docId: request.docId, currentDocId: getDocumentId });
         })().then(respond, () => respond({ ok: false, reason: 'stale' }));
         return true;
       }
       case 'EXECUTE':
         // A proposal made against another document instance (reload, SPA hard navigation) must not act here.
-        if (message.docId !== getDocumentId()) { respond({ ok: false, reason: 'stale' }); break; }
-        void execute(message.epoch, message.proposal, announcer, async () => {
-          try { return ((await chrome.runtime.sendMessage({ type: 'EXECUTING', turnId: message.turnId, jobId: message.jobId })) as { ok?: boolean } | undefined)?.ok === true; } catch { return false; }
-        }, { confirmed: message.confirmed === true, context: message.context }).then(respond).catch(() => respond({ ok: false, reason: 'not_found' }));
+        if (message.docId !== getDocumentId() || !alive(message.generation)) { respond({ ok: false, reason: 'stale' }); break; }
+        void execute(message.epoch, message.proposal, { host: announcer.host, announce: text => announcer.announce(text, message.generation) }, async () => {
+          try { return ((await chrome.runtime.sendMessage({ type: 'EXECUTING', turnId: message.turnId, jobId: message.jobId, generation: message.generation, docId: message.docId })) as { ok?: boolean } | undefined)?.ok === true && alive(message.generation); } catch { return false; }
+        }, { confirmed: message.confirmed === true, context: message.context, alive: () => alive(message.generation) }).then(respond).catch(() => respond({ ok: false, reason: 'not_found' }));
         return true;
       case 'SETTLE_DIFF':
         void (async () => {

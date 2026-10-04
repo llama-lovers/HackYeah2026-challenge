@@ -10,7 +10,7 @@ test('temporary page access uses activeTab and scripting without broadening pers
 });
 test('declarative content scripts cover supported InPost/Google sites and local fixtures', () => {
   assert.equal(manifest.content_scripts.length, 1);
-  assert.deepEqual(manifest.content_scripts[0].matches, ['https://inpost.pl/*', 'https://www.inpost.pl/*', 'https://google.com/*', 'https://www.google.com/*', 'https://google.pl/*', 'https://www.google.pl/*', '__PROXY_ORIGIN__/fixtures/*']);
+  assert.deepEqual(manifest.content_scripts[0].matches, ['https://inpost.pl/*', 'https://www.inpost.pl/*', 'https://google.com/*', 'https://www.google.com/*', 'https://google.pl/*', 'https://www.google.pl/*', 'https://youtube.com/*', 'https://www.youtube.com/*', 'https://m.youtube.com/*', '__PROXY_ORIGIN__/fixtures/*']);
   assert.deepEqual(manifest.content_scripts[0].js, ['content/content.js']);
   assert.notEqual(manifest.content_scripts[0].all_frames, true);
   for (const pattern of [...manifest.host_permissions, ...manifest.content_scripts[0].matches]) assert(!/<all_urls>|^\*:\/\/\*\/|^https?:\/\/\*\//.test(pattern), pattern);

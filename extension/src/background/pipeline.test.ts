@@ -850,7 +850,8 @@ test('search after opening a browser start page uses browser navigation without 
     assert.equal((await turn()).phase, 'idle');
   }
   assert(!tabCalls.some(c => ['SNAPSHOT', 'EXECUTE'].includes(c.message.type)));
-  assert.deepEqual(injected, []);
+  // Browser start pages are never injected; only the URL-less tab gets one silent attempt.
+  assert.equal(injected.length, 1);
 });
 
 test('address bar accepts addresses or searches, and explicit new-tab searches create a new tab', async () => {

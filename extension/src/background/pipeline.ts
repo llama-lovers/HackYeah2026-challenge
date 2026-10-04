@@ -44,6 +44,14 @@ export async function resetTurn(): Promise<void> { clearWaits(); await setTurn({
 export async function ping(tabId: number): Promise<boolean> {
   try { return (await chrome.tabs.sendMessage(tabId, { type: 'PING' }, { frameId: 0 })).ok === true; } catch { return false; }
 }
+// Pages outside the manifest list get the content bundle on demand, under the activeTab grant from the keyboard command.
+// Without a grant (e.g. after a cross-origin navigation) injection fails and the caller reports the page as unreadable.
+async function injectContent(tabId: number): Promise<boolean> {
+  if (await ping(tabId)) return true;
+  try { await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: ['content/content.js'], world: 'ISOLATED' }); }
+  catch { return false; }
+  return ping(tabId);
+}
 // Ordinary top-level documents only. Browser-internal pages, extension stores, missing and malformed URLs never get a recording session.
 export function isAccessibleUrl(url?: string): boolean {
   if (!url) return false;
@@ -64,13 +72,10 @@ export async function preparePageAccess(tab: chrome.tabs.Tab): Promise<boolean> 
     return true;
   }
   // After an extension reload Chrome may hide this URL and our blank-tab list is
-  // gone. Recording still supports browser commands; page reads/injection are not attempted.
-  if (tabId !== undefined && tab.url === undefined) return true;
+  // gone. Recording still supports browser commands; page access is attempted silently.
+  if (tabId !== undefined && tab.url === undefined) { await injectContent(tabId); return true; }
   if (tabId === undefined || !isAccessibleUrl(tab.url)) { speakTts(msg.PAGE_UNSUPPORTED); return false; }
-  if (await ping(tabId)) return true;
-  try { await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: ['content/content.js'], world: 'ISOLATED' }); }
-  catch { speakTts(msg.PAGE_ACCESS_FAILED); return false; }
-  if (await ping(tabId)) return true;
+  if (await injectContent(tabId)) return true;
   speakTts(msg.PAGE_ACCESS_FAILED);
   return false;
 }
@@ -420,6 +425,7 @@ async function runSummary(run: CommandRun): Promise<void> {
   const say = (text: string) => speakTurn(turnId, tabId, text);
   let result: SnapshotResult;
   try {
+    await injectContent(tabId);
     result = await chrome.tabs.sendMessage(tabId, { type: 'SNAPSHOT' }, { frameId: 0 });
     if (!result.ok) throw new Error('snapshot_failed');
   } catch { await say(msg.SNAPSHOT_FAILED); return; }
@@ -439,6 +445,7 @@ async function runActions(run: CommandRun): Promise<void> {
   const say = (text: string) => speakTurn(turnId, tabId, text);
   let result: CandidatesResult;
   try {
+    await injectContent(tabId);
     result = await chrome.tabs.sendMessage(tabId, { type: 'CANDIDATES' }, { frameId: 0 });
     if (!result.ok) throw new Error('snapshot_failed');
   } catch { await say(msg.SNAPSHOT_FAILED); return; }
@@ -580,6 +587,7 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
   let result: SnapshotResult;
   try {
     if (tabId === undefined) throw new Error('no_tab');
+    await injectContent(tabId);
     result = await chrome.tabs.sendMessage(tabId, { type: 'SNAPSHOT' }, { frameId: 0 });
     if (!result.ok) throw new Error('snapshot_failed');
   } catch { await say(msg.SNAPSHOT_FAILED); return; }

@@ -12,16 +12,26 @@ export async function run(ctx) {
   const blank = await waitForTarget(ctx.browser.port, t => t.type === 'page' && /^(?:chrome|edge):\/\/newtab\/?$/.test(t.url));
   const session = await attach(ctx.client, blank.id);
   await ctx.waitIdle();
+  await ctx.swEval(`(() => {
+    globalThis.__searchUpdates=[];
+    const update=chrome.tabs.update.bind(chrome.tabs);
+    chrome.tabs.update=async (id, options) => { globalThis.__searchUpdates.push(options); return update(id, options); };
+  })()`);
   await ctx.client.send('Page.bringToFront', {}, session);
   await ctx.toggle({ stubText: 'wpisz paczkomaty w Warszawie w pole wyszukiwania' });
   await waitFor(async () => (await ctx.turnState()).phase === 'recording', { label: 'start-page recording after reload' });
   await new Promise(resolve => setTimeout(resolve, 800));
   await ctx.toggle();
   await waitFor(async () => {
-    const href = await evaluate(ctx.client, session, 'location.href');
-    const url = new URL(href);
-    return url.hostname === 'www.google.com' && url.pathname === '/search' && url.searchParams.get('q') === 'paczkomaty w Warszawie';
+    const updates = await ctx.swEval('globalThis.__searchUpdates');
+    return updates.some(update => {
+      const url = new URL(update.url);
+      return url.hostname === 'www.google.com' && url.pathname === '/search' && url.searchParams.get('q') === 'paczkomaty w Warszawie';
+    });
   }, { label: 'Google search with exact spoken query' });
+  // Google can redirect immediately to /sorry/ (CAPTCHA); do not mistake that
+  // for failure to dispatch the correct search URL from the extension.
+  await waitFor(() => evaluate(ctx.client, session, "location.hostname === 'www.google.com' && ['/search', '/sorry/index'].includes(location.pathname)"), { label: 'Google navigation committed' });
   await waitFor(() => evaluate(ctx.client, session, "document.readyState === 'complete' && document.body.innerText.trim().length > 30"), { timeoutMs: 15000, label: 'search page loaded' });
   await ctx.waitIdle();
   assert.equal(await original.evaluate('location.pathname'), '/fixtures/tracking-form.html');

@@ -2,16 +2,23 @@ export type BrowserSearch = { query: string; newTab: boolean; addressBar: boolea
 import { browserCommandText } from './browser-command.ts';
 const NEW_TAB = /\s+w\s+nowej\s+(?:karcie|zak[lł]adce)\s*[.!]?$/iu;
 
-export function parseBrowserSearch(text: string, googlePage = false): BrowserSearch | null {
+export function parseBrowserSearch(text: string, googlePage = false, bareSearch = googlePage): BrowserSearch | null {
   const normalized = browserCommandText(text);
+  // Resolve references against the current page/history, not as literal Google queries.
+  if (/^(?:wyszukaj|szukaj|poszukaj)(?:\s+(?:teraz|to|tego|tego samego|to[,]?\s+co\s+.+))?\s*[.!?]?$/iu.test(normalized)) return null;
   const newTabRequest = /^otw[oó]rz\s+now[aą]\s+(?:kart[eę]|zak[lł]adk[eę])\s+i\s+/iu.exec(normalized);
   const source = newTabRequest ? browserCommandText(normalized.slice(newTabRequest[0].length)) : normalized;
   const prefix = /^(?:(?:wyszukaj|szukaj|poszukaj)(?:\s+mi)?|znajd[zź](?:\s+mi)?\s+w\s+(?:google|internecie|sieci)|chc[eę]\s+(?:wyszuka[cć]|znale[zź][cć]))(?:[,:]\s*|\s+|$)(?:prosz[eę][,:]?\s+)?(?:(?:w|na)\s+(?:google|internecie|sieci)\s+)?/iu.exec(source);
+  // Preserve the previously supported explicit "chcę znaleźć" search intent.
+  const wantedSearch = /^chc[eę]\s+znale[zź][cć]\s+/iu.test(text.trim()) ? /^znajd[zź]\s+/iu.exec(source) : null;
   const addressBar = /^(?:prosz[eę]\s+)?wpisz\s+(.+?)\s+(?:w\s+(?:pasek|pasku)|do\s+paska)\s+adresu\s*[.!]?$/iu.exec(source);
   const field = googlePage ? /^(?:wpisz|wprowad[zź])\s+(.+?)\s+(?:w|do)\s+(?:pol[eau]\s+)?(?:wyszukiwark[eęi]|wyszukiwania)(?:\s+google)?(?:\s+i\s+(?:wyszukaj|szukaj|naci[sś]nij\s+enter))?\s*[.!]?$/iu.exec(source) : null;
-  const contextual = googlePage ? /^(?:znajd[zź]|wpisz)(?:\s+mi)?\s+(.+)$/iu.exec(source) : null;
-  if (!prefix && !addressBar && !field && !contextual) return null;
-  let query = field ? field[1]! : addressBar ? addressBar[1]! : prefix ? source.slice(prefix[0].length) : contextual![1]!;
+  // Bare commands are shortcuts on an empty search page, not on Google results:
+  // "znajdź drugi wynik" must reach the model with the current page snapshot.
+  const contextual = googlePage && bareSearch ? /^(?:znajd[zź]|wpisz)(?:\s+mi)?\s+(.+)$/iu.exec(source) : null;
+  const searchPrefix = prefix ?? wantedSearch;
+  if (!searchPrefix && !addressBar && !field && !contextual) return null;
+  let query = field ? field[1]! : addressBar ? addressBar[1]! : searchPrefix ? source.slice(searchPrefix[0].length) : contextual![1]!;
   if (!field && !addressBar) query = query.replace(/^(?:w|na)\s+(?:google|internecie|sieci)(?:\s+|$)/iu, '');
   // A request to search within the current website still goes to page actions.
   if (/^na\s+(?:tej\s+)?stronie\b/iu.test(query)) {
@@ -24,6 +31,7 @@ export function parseBrowserSearch(text: string, googlePage = false): BrowserSea
   query = query.replace(NEW_TAB, '').replace(/\s+w\s+(?:google|internecie|sieci)\s*[.!]?$/iu, '').replace(/\s+prosz[eę]\s*[.!]?$/iu, '').trim();
   // Sentence punctuation from STT is not part of the search query.
   query = query.replace(/[.!]+$/u, '').trim();
+  if (/^(?:to|tego|to[,]?\s+co\s+.+)$/iu.test(query)) return null;
   if (!query || query.length > 500 || /[\u0000-\u001f\u007f]/u.test(query)) return { invalid: true };
   return { query, newTab, addressBar: !!addressBar };
 }
@@ -41,6 +49,10 @@ export function googleSearchUrl(query: string): string {
   const url = new URL('https://www.google.com/search');
   url.searchParams.set('q', query);
   return url.href;
+}
+
+export function isGoogleSearchHome(value: unknown): boolean {
+  return isGoogleSearchPage(value) && new URL(value as string).pathname !== '/search';
 }
 
 export function isBrowserStartPage(url: string | undefined): boolean {

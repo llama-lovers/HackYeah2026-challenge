@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { googleSearchUrl, isBrowserStartPage, isGoogleSearchPage, parseBrowserSearch } from './browser-search.ts';
+import { googleSearchUrl, isBrowserStartPage, isGoogleSearchPage, isGoogleSearchHome, parseBrowserSearch } from './browser-search.ts';
+
+test('search intent survives normalization and result selection stays with the model', () => {
+  assert.deepEqual(parseBrowserSearch('Chcę znaleźć czerwone koty.'), { query: 'czerwone koty', newTab: false, addressBar: false });
+  assert.equal(parseBrowserSearch('znajdź drugi wynik z Wikipedii', true, false), null);
+  assert.deepEqual(parseBrowserSearch('wpisz koty w wyszukiwarkę', true, false), { query: 'koty', newTab: false, addressBar: false });
+  assert(isGoogleSearchHome('https://www.google.com/'));
+  assert(!isGoogleSearchHome('https://www.google.com/search?q=koty'));
+});
 
 test('complete search commands preserve the dictated query', () => {
   for (const text of ['wyszukaj paczkomaty w Warszawie', 'szukaj w Google paczkomaty w Warszawie', 'znajdź w internecie paczkomaty w Warszawie', 'wyszukaj paczkomaty w Warszawie w Google']) {
@@ -29,7 +37,7 @@ test('Google field/search commands submit only in verified Google context', () =
 
 test('page search, clicks and unrelated dictation remain page commands', () => {
   for (const text of ['kliknij Szukaj', 'wpisz wyszukaj koty w pole', 'znajdź paczkę', 'wyszukaj na tej stronie koty', 'wyszukaj na stronie paczkomaty', 'powiedz wyszukaj koty']) assert.equal(parseBrowserSearch(text), null, text);
-  assert.deepEqual(parseBrowserSearch('wyszukaj'), { invalid: true });
+  for (const text of ['wyszukaj', 'wyszukaj to', 'wyszukaj to co znalazłeś', 'wyszukaj to, co wpisałeś']) assert.equal(parseBrowserSearch(text), null);
   assert.deepEqual(parseBrowserSearch('wyszukaj w Google'), { invalid: true });
   assert.deepEqual(parseBrowserSearch('wyszukaj ' + 'x'.repeat(501)), { invalid: true });
 });

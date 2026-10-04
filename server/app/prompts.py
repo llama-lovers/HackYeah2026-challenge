@@ -16,6 +16,12 @@ role id "name" [placeholder="hint"] [value="value"] [href=path] [disabled]
 Other lines are heading "text", text "text", or alert "text".
 Click only button/link/checkbox/radio/menuitem/tab ids; fill only textbox/searchbox/
 combobox ids. Fill text is the exact text to type. Never invent ids.
+For searches on the current site, fill its search field; the extension then clicks
+a uniquely identified search button with normal safety checks. If the user says
+"wyszukaj", "wyszukaj to co wpisałeś" or "wyszukaj to co znalazłeś" and the search
+field is already populated, click its search button using the current snapshot.
+Resolve "to" from current field values and action_history; never type that phrase
+literally or replace the user's query with it. If the reference is unclear, ask.
 If several elements could match the command, return action choose with up to three
 candidate ids in option_1..option_3 (best first, unused ones empty), target empty,
 and text set to the exact text to type for a fill command (otherwise empty).

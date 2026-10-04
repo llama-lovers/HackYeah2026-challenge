@@ -3,7 +3,7 @@ import type { PingResult, FromOffscreen, SnapshotResult, CandidatesResult, Execu
 import type { PageDiff, Snapshot } from '../shared/snapshot-format.ts';
 import { parseIntent, isCaptchaLabel } from '../shared/intent.ts';
 import { normalizeNavigationUrl, parseNavigationCommand } from '../shared/navigation.ts';
-import { googleSearchUrl, isBrowserStartPage, isGoogleSearchPage, parseBrowserSearch } from '../shared/browser-search.ts';
+import { googleSearchUrl, isBrowserStartPage, isGoogleSearchPage, isGoogleSearchHome, parseBrowserSearch } from '../shared/browser-search.ts';
 import { wordsToDigits, digitsToSpokenGroups, speakable } from '../shared/polish-speech.ts';
 import { createBudget, takeStep } from '../shared/limits.ts';
 import type { StepBudget } from '../shared/limits.ts';
@@ -25,6 +25,7 @@ import { toModelText, spokenName } from '../shared/snapshot-format.ts';
 import * as msg from '../shared/messages.pl.ts';
 import { postJson, classifyFailure } from './proxy.ts';
 import { readActionHistory, rememberAction } from './history.ts';
+import { isSearchField, searchSubmitButton, isYouTubePage } from '../shared/site-search.ts';
 import { ensureOffscreen } from './offscreen.ts';
 import { speakPiper, stopSpeech } from './speech.ts';
 import { getSpeechOutput } from '../shared/speech.ts';
@@ -177,7 +178,7 @@ export function fireWait(turnId: string): Promise<void> {
     if (decision.kind === 'drop') return;
     await setTurn({ ...turn, waitNotifiedAt: Date.now() });
     // A routine status: spoken once, and never the target of "powtórz".
-    await announce(turn.tabId, msg.WAIT_NOTICE, 'status');
+    // The deadline is tracked silently; do not interrupt the answer with a notice.
   });
 }
 // Called when the worker starts: a processing turn that survived a worker restart keeps its original deadline.
@@ -326,6 +327,17 @@ export async function performProposal(run: CommandRun, step: ProposalStep): Prom
   if (executed.kind === 'none') { await say(msg.noneSay(proposal.say)); return 'stopped'; }
   await rememberAction({ utterance: run.utterance ?? '', action: executed.kind,
     detail: `${executed.name}${executed.kind === 'fill' ? ': ' + proposal.text : ''}. Wykonano działanie; nie oznacza to potwierdzenia wyniku formularza.` });
+  const filled = step.preSnapshot.nodes.find(node => node.id === proposal.target);
+  if (executed.kind === 'fill' && filled && isSearchField(filled)
+      && !/(?:nie\s+(?:wyszukuj|szukaj|zatwierdzaj)|bez\s+(?:wyszukiwania|zatwierdzania))/iu.test(run.utterance ?? '')) {
+    try {
+      const fresh: SnapshotResult = await chrome.tabs.sendMessage(tabId, { type: 'SNAPSHOT' }, { frameId: 0 });
+      if (fresh.ok && fresh.docId === step.docId && await ownsTurn(turnId)) {
+        const submit = searchSubmitButton(fresh.snapshot);
+        if (submit?.id) return performProposal(run, { proposal: { action: 'click', target: submit.id, text: '', needs_confirmation: false, say: '' }, epoch: fresh.snapshot.epoch, docId: fresh.docId, preSnapshot: fresh.snapshot, announce: step.announce });
+      }
+    } catch { /* Keep the completed fill if a safe submit button is unavailable. */ }
+  }
   if (step.announce === 'model') await announceEffect(tabId, { kind: executed.kind, name: executed.name, role: executed.role }, executed.diff ?? { added: [], removed: [], changed: [], alerts: [] }, signal, turnId);
   else if (step.announce === 'local') await say(msg.localEffect({ kind: executed.kind, name: executed.name, role: executed.role }, executed.diff ?? { added: [], removed: [], changed: [], alerts: [] }, step.category));
   return 'done';
@@ -458,6 +470,12 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
   const intent = parseIntent(text);
   if (intent.kind === 'captcha_request') { await say(msg.CAPTCHA_REFUSAL); return; }
   let search = parseBrowserSearch(text);
+  if (search && !('invalid' in search) && !search.newTab && !search.addressBar && !/\bgoogle\b|w\s+(?:internecie|sieci)/iu.test(text) && tabId !== undefined) {
+    let pageUrl: unknown;
+    try { pageUrl = (await chrome.tabs.get(tabId)).url; } catch { /* Use the page receiver below. */ }
+    if (!pageUrl) try { pageUrl = (await chrome.tabs.sendMessage(tabId, { type: 'PING' }, { frameId: 0 })).url; } catch { /* Browser start page. */ }
+    if (isYouTubePage(pageUrl)) search = null;
+  }
   let browserStart = false;
   // Google-specific field commands can submit a search directly. Other websites
   // retain normal field filling; only inspect context when this grammar could match.
@@ -465,11 +483,11 @@ export async function runCommand(turnId: string, tabId: number | undefined, rawT
     try {
       const tab = await chrome.tabs.get(tabId);
       browserStart = isBrowserStartPage(tab.url) || (tab.url === undefined && (await blankTabs()).includes(tabId));
-      if (browserStart || isGoogleSearchPage(tab.url)) search = parseBrowserSearch(text, true);
+      if (browserStart || isGoogleSearchPage(tab.url)) search = parseBrowserSearch(text, true, browserStart || isGoogleSearchHome(tab.url));
     } catch { /* A tab can disappear while its command is being transcribed. */ }
     if (!search) try {
       const page: PingResult = await chrome.tabs.sendMessage(tabId, { type: 'PING' }, { frameId: 0 });
-      if (page.ok && isGoogleSearchPage(page.url)) search = parseBrowserSearch(text, true);
+      if (page.ok && isGoogleSearchPage(page.url)) search = parseBrowserSearch(text, true, isGoogleSearchHome(page.url));
     } catch { /* No DOM on browser new-tab pages. Explicit browser searches still work. */ }
   }
   if (search) {

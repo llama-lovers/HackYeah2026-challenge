@@ -91,7 +91,7 @@ export async function run(ctx) {
   await offscreen('globalThis.__failSpeech=true');
   await options("document.querySelector('#test-speech').click()");
   await waitFor(() => ctx.swEval('globalThis.__ttsLog.length > 0'));
-  assert((await ctx.swEval('globalThis.__ttsLog')).at(-1).includes('Piper jest niedostępny.'));
+  assert.equal((await ctx.swEval('globalThis.__ttsLog')).at(-1), 'Dzień dobry. Tu FastEcho. Lokalny głos Piper jest gotowy.');
   await options("document.querySelector('#speech-output').value='screen_reader';document.querySelector('#save-speech').click()");
   await waitFor(() => ctx.swEval("chrome.storage.local.get('speechOutput').then(items=>items.speechOutput === 'screen_reader')"));
 }

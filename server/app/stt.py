@@ -14,7 +14,7 @@ def transcribe(audio_bytes: bytes, mime: str) -> str:
 
     Provider failures raise TranscriptionError(code). The teammate implementation
     POSTs to https://openrouter.ai/api/v1/audio/transcriptions using
-    STT_MODEL (default openai/whisper-large-v3-turbo), language "pl", a
+    STT_MODEL (default openai/whisper-large-v3), language "pl", a
     10 s timeout per chunk and OPENROUTER_API_KEY from the environment. Audio
     is prepared using Silero VAD and silence trimming before upload, and persisted
     only when STT_AUDIO_DEBUG_DIR enables local debugging; transcripts are never

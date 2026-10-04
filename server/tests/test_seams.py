@@ -79,7 +79,7 @@ def test_whisper_request_shape(monkeypatch, mime, fmt):
     body = json.loads(request.content)
     assert str(request.url) == "https://openrouter.ai/api/v1/audio/transcriptions"
     assert request.headers["authorization"] == "Bearer test-key"
-    assert body == {"model": "openai/whisper-large-v3-turbo", "language": "pl",
+    assert body == {"model": "openai/whisper-large-v3", "language": "pl",
                     "temperature": 0.0, "response_format": "verbose_json",
                     "timestamp_granularities": ["word", "segment"],
                     "input_audio": {"data": "AGF1ZGlv", "format": "wav"}}

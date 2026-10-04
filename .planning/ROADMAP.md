@@ -88,7 +88,7 @@ Plans:
 **Plans**: 3 plans
 Plans:
 **Wave 1**
-- [ ] 04-01-PLAN.md — Urgent keyboard/local-spoken cancellation and one exclusive screen-reader/browser-TTS output route
+- [x] 04-01-PLAN.md — Urgent keyboard/local-spoken cancellation and one exclusive screen-reader/browser-TTS output route
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 04-02-PLAN.md — Speech-gated silence auto-stop, five owned offscreen earcons and accessible earcon toggle
@@ -126,4 +126,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 (Phase 3 may start alongsid
 | 1. Voice-to-Effect Vertical Slice | 4/4 | In Progress|  |
 | 2. Safe InPost Parcel Tracking | 3/3 | In Progress|  |
 | 3. Page Exploration & Conversation | 3/3 | In Progress|  |
-| 4. Audio Control & Accessible Settings | 0/3 | Not started | - |
+| 4. Audio Control & Accessible Settings | 1/3 | In Progress|  |
